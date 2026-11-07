@@ -6,80 +6,85 @@
 <main><div class="hero">
 <h1>CUDA-Accelerated Multi-Exposure Image Fusion</h1>
 <div class="team"><div><span>TEAM</span>Estella Xie <small>ziyoux</small><br>Junhao Li <small>junhaoli</small></div></div></div>
-<div class="document" id="proposal"><aside><div class="eyebrow">IN THIS PROPOSAL</div><nav aria-label="Proposal sections"><a href="#summary">Summary</a><a href="#background">Background</a><a href="#the-challenge">The Challenge</a><a href="#resources">Resources</a><a href="#goals-and-deliverables">Goals and Deliverables</a><a href="#evaluation">Evaluation</a><a href="#platform-choice">Platform Choice</a><a href="#schedule">Schedule</a><a href="#proposed-division">Proposed division</a><a href="#reference">Reference</a></nav><a href="proposal.md">Markdown source ↗</a></aside><article><section id="summary"><span class="number">01</span><div><h2>Summary</h2><p>We propose to implement and optimize a CUDA-based multi-exposure image fusion pipeline that combines photographs of the same scene taken at different exposure levels into a single image with well-preserved details in both bright and dark regions. Using NVIDIA GPUs, we will parallelize multi-scale image processing operations and investigate optimizations including kernel fusion, shared-memory tiling, and intermediate-buffer reuse to improve execution time and memory efficiency. We will evaluate the performance and scalability of our optimized implementation against a CPU reference and an unoptimized CUDA baseline.</p></div></section>
-<section id="background"><span class="number">02</span><div><h2>Background</h2><p>Photographs captured at a single exposure often lose details in either bright or dark regions. <strong>Exposure fusion</strong> addresses this problem by combining multiple images of the same scene at different exposures into a single image.</p>
-<p>We will implement the <a href="https://www.tommertens.com/old-academic/papers/exposure_fusion_reduced.pdf">Exposure Fusion algorithm</a> by Mertens et al., which consists of four main stages:</p>
+<div class="document" id="proposal"><aside><div class="eyebrow">IN THIS PROPOSAL</div><nav aria-label="Proposal sections"><a href="#summary">Summary</a><a href="#background">Background</a><a href="#the-challenge">The Challenge</a><a href="#resources">Resources</a><a href="#goals-and-deliverables">Goals and Deliverables</a><a href="#evaluation">Evaluation</a><a href="#platform-choice">Platform Choice</a><a href="#schedule">Schedule</a><a href="#proposed-division">Proposed division</a><a href="#reference">Reference</a></nav><a href="proposal.md">Markdown source ↗</a></aside><article><section id="summary"><span class="number">01</span><div><h2>Summary</h2><p>We propose to implement and optimize a CUDA-based multi-exposure image fusion pipeline that combines photographs of the same scene taken at different exposure levels into a single image with well-preserved details in both bright and dark regions. Beyond implementing the multi-scale fusion pipeline, we will develop a memory-aware execution planner that selects between full-resident and incremental processing under a specified GPU memory budget. We will investigate selective kernel fusion, shared-memory tiling, and intermediate-buffer reuse, evaluating their trade-offs in execution time, recomputation, data transfer, and peak GPU memory usage.</p></div></section>
+<section id="background"><span class="number">02</span><div><h2>Background</h2><p>Photographs captured at a single exposure often lose details in bright highlights or dark shadows. <strong>Multi-exposure fusion</strong> combines complementary information from differently exposed photographs into a single displayable image. We will follow the <a href="https://www.tommertens.com/old-academic/papers/exposure_fusion_reduced.pdf">Exposure Fusion</a> algorithm proposed by Mertens et al., assuming pre-aligned RGB images of a static scene.</p>
+<p>The algorithm consists of four main stages:</p>
 <ol>
 <li><strong>Weight computation:</strong> Compute per-pixel weights based on contrast, saturation, and well-exposedness, then normalize weights across input images.</li>
 <li><strong>Pyramid construction:</strong> Build Gaussian pyramids of the weight maps and Laplacian pyramids of the input images using filtering and downsampling.</li>
 <li><strong>Multi-scale blending:</strong> Compute weighted combinations of the Laplacian pyramids at each level.</li>
 <li><strong>Reconstruction:</strong> Progressively upsample and combine pyramid levels to produce the final image.</li>
 </ol>
-<p>These operations offer substantial GPU parallelism because most per-pixel computations and neighborhood filters can execute independently. But the pipeline also introduces dependencies between pyramid levels and repeated accesses to large intermediate arrays.</p>
-<p>We will first implement a CPU reference and a straightforward CUDA baseline with separate kernels for each stage, then optimize the GPU pipeline while preserving numerical correctness.</p></div></section>
-<section id="the-challenge"><span class="number">03</span><div><h2>The Challenge</h2><p>The main challenge is efficiently mapping a multi-scale exposure fusion pipeline onto the GPU. Although individual pixel operations are highly parallel, dependencies across images, neighboring pixels, and pyramid levels introduce synchronization and memory overhead.</p>
-<p><strong>1. Algorithmic Dependencies and Parallelism.</strong> Weight normalization requires information from all input exposures, while Gaussian/Laplacian pyramid construction and reconstruction introduce sequential dependencies between levels. Although pixels within each level can be processed in parallel, these dependencies limit parallelism across stages and require synchronization. We will investigate how to minimize this overhead while preserving correctness.</p>
-<p><strong>2. Memory Access Patterns and Data Reuse.</strong> The pipeline repeatedly accesses large images and intermediate pyramids, with relatively little computation per memory access, making it potentially memory-bandwidth-bound. Neighborhood filtering exhibits spatial locality, but naive implementations repeatedly load overlapping pixels from global memory. We will explore kernel fusion and shared-memory tiling to reduce memory traffic, while balancing register pressure, shared-memory usage, and GPU occupancy.</p>
-<p><strong>3. Varying Parallelism Across Pyramid Levels.</strong> Image dimensions shrink at each pyramid level, creating different GPU utilization challenges. Fine levels offer abundant parallelism but high memory traffic, while coarse levels may underutilize the GPU. Boundary handling can also introduce branch divergence. We will investigate level-specific kernel configurations to improve performance across different workload sizes.</p>
-<p><strong>4. Memory Capacity and Buffer Management.</strong> Storing Gaussian and Laplacian pyramids for multiple exposures can consume substantial GPU memory. Reusing buffers and accumulating contributions requires careful handling of intermediate dependencies. For our streaming extension, cross-image weight normalization further complicates incremental processing and may require multiple passes.</p>
+<p>The main data structures are full-resolution image and weight arrays, per-image pyramids, and an accumulated output pyramid. Within each level, weight calculations, filtering, and blending expose substantial data parallelism.</p>
+<p>Our project will use this pipeline to investigate how selective kernel fusion, intermediate-buffer reuse, and execution order affect latency and peak GPU memory consumption. We will first establish a CPU reference and a separate-kernel CUDA baseline, then compare optimized execution strategies while preserving the same algorithm and boundary rules.</p></div></section>
+<section id="the-challenge"><span class="number">03</span><div><h2>The Challenge</h2><p>Although exposure fusion offers substantial pixel-level parallelism, efficient GPU execution requires coordinating spatial, cross-image, and cross-scale dependencies. Neighborhood filters require overlapping input regions, weight normalization depends on all exposures, and pyramid construction and reconstruction impose dependencies between levels.</p>
+<p>Our main target is to reduce data movement and memory consumption without introducing excessive recomputation, synchronization, or GPU resource usage.</p>
+<p>### 1. Dependency-Aware Kernel Fusion Although individual pixel operations are highly parallel, dependencies across images, neighboring pixels, and pyramid levels introduce synchronization and memory overhead. For example, Gaussian/Laplacian pyramid construction and reconstruction introduce sequential dependencies between levels. Each thread block must load sufficient halo data and correctly handle intermediate boundaries. Larger fused regions may introduce redundant computation and increase register or shared-memory usage, reducing occupancy. We will investigate which fusion boundaries provide useful data reuse and when separate execution is preferable.</p>
+<p>### 2. Execution Order and Memory-Capacity Trade-offs</p>
+<p>The pyramid building has two different implementation strategies: full-resident and incremental.</p>
+<p>A <strong>full-resident implementation</strong> retains inputs and required per-image intermediates in GPU memory, enabling direct reuse but increasing memory consumption with exposure count and resolution. An <strong>incremental implementation</strong> processes exposures individually and accumulates their pyramid contributions, reducing resident storage. However, normalized weights require the weight sum across all exposures, preventing a straightforward single-pass approach.</p>
+<p>We will compare retaining intermediate data with a multi-pass strategy that recomputes or reloads weights, evaluating the trade-off between peak memory usage, additional computation, data transfer, and total execution time</p>
+<p>### 3. Uneven Parallelism Across Pyramid Levels Image dimensions shrink at each pyramid level, creating different GPU utilization challenges. Fine levels offer abundant parallelism but high memory traffic, while coarse levels may underutilize the GPU. Dependencies between successive levels also restrict scheduling freedom, even though separate kernel launches in the same stream can enforce execution order without CPU synchronization. We will investigate level-specific kernel configurations to improve performance across different workload sizes.</p>
+<p>### 4. Memory Access Patterns and Data Reuse</p>
+<p>The pipeline repeatedly accesses large images and intermediate pyramids, with relatively little computation per memory access, making it potentially memory-bandwidth-bound. <strong>Neighborhood filtering</strong> exhibits spatial locality, but naive implementations repeatedly load overlapping pixels from global memory. We will explore kernel fusion and shared-memory tiling to reduce memory traffic, while balancing register pressure, shared-memory usage, and GPU occupancy.</p>
+<p>Reducing peak memory usage also requires careful management of intermediate dependencies: <strong>buffers can be reused</strong> only after their contents are no longer needed by filtering, pyramid construction, or reconstruction. For our streaming extension, cross-image weight normalization introduces an additional constraint, since each exposure’s normalized weights depend on all input exposures. Incremental processing may therefore require multiple passes, trading lower memory consumption for recomputation or additional transfers. Throughout these optimizations, we must preserve normalization, sampling, and boundary conventions, validating intermediate results against a CPU reference to distinguish acceptable floating-point differences from implementation errors.</p>
+<p>--- To summarize, our central concern is: &gt; How should computation and intermediate storage be organized to balance execution time and peak GPU memory usage while preserving the exposure-fusion algorithm?</p>
 <p>Through this project, we aim to understand how <strong>algorithmic dependencies, memory bandwidth, and GPU resource constraints</strong> affect performance, and how to balance execution speed, parallelism, and memory efficiency through CUDA optimizations.</p></div></section>
 <section id="resources"><span class="number">04</span><div><h2>Resources</h2><p>We will develop the core CPU reference and CUDA implementations from scratch. Existing libraries will be used for image loading and saving, rather than for the core GPU fusion pipeline.</p>
 <p>Planned resources include:</p>
 <ul>
-<li>An available course NVIDIA GPU; the exact model and memory capacity will be confirmed.</li>
+<li>NVIDIA RTX 2080 GPUs on the GHC machines.</li>
 <li>CUDA development tools, CUDA-event timing, and available NVIDIA profiling tools.</li>
 <li>Pre-aligned exposure brackets from public datasets and/or controlled tripod captures.</li>
 <li>Synthetic constant images, impulses, and odd-sized images for boundary and reconstruction checks.</li>
 </ul>
 <p>No special hardware beyond a CUDA-capable GPU is initially required.</p></div></section>
-<section id="goals-and-deliverables"><span class="number">05</span><div><h2>Goals and Deliverables</h2><p>50% Target — Functional Baseline / Reduced-Scope Outcome</p>
+<section id="goals-and-deliverables"><span class="number">05</span><div><h2>Goals and Deliverables</h2><p><strong>50% Target — Functional Baseline</strong></p>
 <ul>
-<li>Complete a CPU reference and a separate-kernel CUDA implementation.</li>
-<li>Support weight computation, normalization, pyramid construction, blending, and reconstruction.</li>
-<li>Validate intermediate stages and final outputs against the reference.</li>
-<li>Produce stage-level timings and identify the dominant bottlenecks.</li>
+<li>Implement a CPU reference and a separate-kernel CUDA pipeline covering weight computation, normalization, pyramid construction, blending, and reconstruction.</li>
+<li>Produce fused images from pre-aligned exposures and verify correctness against the CPU reference.</li>
 </ul>
-<p>100% Target — Optimized Pipeline</p>
+<p><strong>100% Target — Optimized GPU Pipeline</strong></p>
 <ul>
-<li>Implement shared-memory tiling for selected neighborhood operations.</li>
-<li>Implement at least one substantive fusion strategy, such as filtering with downsampling or compatible weight computations.</li>
-<li>Reuse intermediate storage to reduce peak memory consumption.</li>
-<li>Compare alternative execution configurations across resolutions, exposure counts, and pyramid depths.</li>
-<li>Deliver a command-line application, correctness checks, visual examples, and a measurement-supported performance evaluation.</li>
+<li>Optimize neighborhood operations using shared-memory tiling and implement at least one neighborhood-based fusion strategy, such as filtering with downsampling.</li>
+<li>Reuse intermediate buffers based on their lifetimes to reduce peak GPU memory consumption.</li>
+<li>Implement both full-resident and multi-pass incremental execution. The incremental mode will preserve cross-image weight normalization while avoiding simultaneous storage of all input pyramids.</li>
+<li>Compare the CPU reference, baseline CUDA pipeline, and optimized implementation using execution time, stage-level timings, peak memory usage, and numerical error.</li>
+<li>Deliver a command-line application, representative visual results, and a performance evaluation explaining the benefits and limitations of each optimization.</li>
 </ul>
-<p>We will measure improvements rather than promise a fixed speedup before profiling.</p>
-<p>150% Target — Incremental and Overlapped Execution</p>
+<p><strong>150% Target — Memory-Aware Incremental Execution</strong></p>
 <ul>
-<li>Process exposures incrementally without retaining all input pyramids simultaneously.</li>
-<li>Handle cross-image normalization through an explicitly designed multi-pass strategy.</li>
-<li>Overlap transfers with computation using CUDA streams and double buffering.</li>
-<li>Evaluate the trade-off among memory savings, recomputation, additional transfers, and runtime.</li>
-</ul>
-<p>A poster demonstration will show individual exposures and the fused output, accompanied by runtime and memory comparisons. A live demo is optional.</p></div></section>
-<section id="evaluation"><span class="number">06</span><div><h2>Evaluation</h2><p>We will compare the CPU reference, baseline CUDA pipeline, and optimized variants using identical algorithm parameters and boundary rules.</p>
-<p>Measurements will include:</p>
+<li>Develop a memory-aware planner that estimates storage requirements and automatically selects a feasible execution mode under a specified GPU memory budget.</li>
+<li>Use performance measurements to guide mode selection when both modes fit within the budget.</li>
+<li>Overlap host–device transfers with computation using CUDA streams and double buffering, ensuring correct dependencies and safe buffer reuse.</li>
+<li>Evaluate planning decisions and transfer overlap against the manually selected, synchronous implementations.</li>
+</ul></div></section>
+<section id="evaluation"><span class="number">06</span><div><h2>Evaluation</h2><p>We will compare the CPU reference, separate-kernel CUDA baseline, and optimized implementations using identical algorithm parameters, sampling conventions, and boundary rules.</p>
+<p>Our evaluation will include:</p>
 <ul>
-<li>GPU pipeline latency and processing time including host–device transfers.</li>
-<li>Stage-level runtime and peak device-memory allocation.</li>
-<li>Numerical error relative to the reference.</li>
-<li>Ablations isolating tiling, fusion, and storage reuse.</li>
+<li><strong>Correctness</strong>: Compare intermediate and final floating-point outputs against the CPU reference using maximum absolute error and RMSE. Visual examples will demonstrate fusion quality separately from numerical correctness.</li>
+<li><strong>Performance</strong>: Measure GPU pipeline latency and processing time including host–device transfers. Report stage-level timings to identify bottlenecks.</li>
+<li><strong>Memory efficiency</strong>: Measure peak device-memory allocation and compare full-resident and incremental execution, quantifying memory savings alongside additional recomputation, transfers, and execution time.</li>
+<li><strong>Optimization ablations</strong>: Evaluate tiling, kernel fusion, and buffer reuse individually and in combination to identify their contributions and interactions.</li>
 </ul>
-<p>Experiments will vary image resolution, exposure count, and pyramid depth. Profiling evidence will be used to explain whether performance is limited by memory traffic, launch overhead, synchronization, or available parallelism. Visual comparisons will illustrate application behavior separately from implementation correctness.</p></div></section>
-<section id="platform-choice"><span class="number">07</span><div><h2>Platform Choice</h2><p>CUDA provides explicit control over thread-block organization, shared memory, synchronization, and device buffers. These controls are well matched to the project’s central trade-offs: neighborhood reuse, multi-stage fusion, and memory scheduling. The CPU implementation will provide a correctness reference and a clearly defined performance baseline.</p></div></section>
+<p>Our experiments will vary image resolution, exposure count, and pyramid depth. Profiling will be used to investigate whether performance is limited by memory traffic, launch overhead, synchronization, or insufficient parallelism.</p>
+<p>For the 150% goal, we will additionally compare automatic planning with manually selected execution modes and asynchronous execution with its synchronous counterpart.</p></div></section>
+<section id="platform-choice"><span class="number">07</span><div><h2>Platform Choice</h2><p>We will use C++/CUDA on the NVIDIA RTX 2080 GPUs in the GHC machines. Exposure fusion offers substantial pixel-level parallelism in weight computation, filtering, and blending. CUDA provides explicit control over shared memory, kernel fusion, and buffer allocation, making it suitable for exploring execution-time and memory trade-offs between full-resident and incremental processing.</p></div></section>
 <section id="schedule"><span class="number">08</span><div><h2>Schedule</h2><div class="table-wrap"><table><thead>
-<tr><th>Week</th><th>Planned work</th></tr>
+<tr><th>Dates</th><th>Planned Work</th></tr>
 </thead><tbody>
-<tr><td>Nov 7–13</td><td>Finalize algorithm definitions, obtain data, confirm GPU access, and build the CPU reference.</td></tr>
-<tr><td>Nov 14–20</td><td>Implement independent CUDA stages and validate intermediate results.</td></tr>
-<tr><td>Nov 21–27</td><td>Complete the baseline, profile bottlenecks, and submit the Nov 23 milestone with preliminary results and an updated plan. Begin tiling/fusion experiments.</td></tr>
-<tr><td>Nov 28–Dec 4</td><td>Complete core optimizations and buffer reuse; run controlled comparisons. Attempt incremental execution if ahead of schedule.</td></tr>
-<tr><td>Dec 5–10</td><td>Finish experiments, document limitations, and complete the Dec 10 final submission.</td></tr>
-<tr><td>Dec 11</td><td>Present visual results and performance findings at the poster session.</td></tr>
+<tr><td><strong>Nov 8–13</strong></td><td>Finalize algorithm and boundary conventions, prepare input datasets, and implement the CPU reference.</td></tr>
+<tr><td><strong>Nov 14–18</strong></td><td>Complete the separate-kernel CUDA baseline and validate intermediate stages and final outputs. Profile the baseline to identify performance bottlenecks.</td></tr>
+<tr><td><strong>Nov 19–23</strong></td><td>Analyze profiling results, obtain preliminary optimization results, and submit the <strong>Nov 23 milestone report</strong> with an updated schedule. Implement more optimization strategies if ahead of schedule.</td></tr>
+<tr><td><strong>Nov 24–30</strong></td><td>Combine shared-memory tiling, selected neighborhood fusion, buffer reuse, and a correct multi-pass incremental execution mode. Run experiments to evaluate the combined optimizations.</td></tr>
+<tr><td><strong>Dec 1–4</strong></td><td>Compare full-resident and incremental execution; run correctness checks and optimization ablations across workload sizes. Attempt automatic planning and transfer overlap if ahead of schedule.</td></tr>
+<tr><td><strong>Dec 5–10</strong></td><td>Complete experiments and performance analysis, finalize deliverables, and submit the <strong>Dec 10 final report</strong>.</td></tr>
+<tr><td><strong>Dec 11</strong></td><td><strong>Poster session</strong>: present visual results, performance findings, and memory–runtime trade-offs.</td></tr>
 </tbody></table></div></div></section>
 <section id="proposed-division"><span class="number">09</span><div><h2>Proposed division</h2><ul>
-<li>Estella: initially lead quality weights and cross-image accumulation;</li>
-<li>Junhao: lead pyramid construction and reconstruction.</li>
+<li><strong>Estella</strong>: Lead quality-weight computation, cross-image normalization, and weighted pyramid accumulation. Implement the corresponding CPU and CUDA stages and the multi-pass incremental processing workflow.</li>
+<li><strong>Junhao</strong>: Lead Gaussian/Laplacian pyramid construction and image reconstruction. Implement the corresponding CPU and CUDA stages, shared-memory tiling, and filtering/downsampling fusion.</li>
 </ul>
-<p>Both will participate in reference validation, optimization, and experiments.</p></div></section>
-<section id="reference"><span class="number">10</span><div><h2>Reference</h2><p>Tom Mertens, Jan Kautz, and Frank Van Reeth. Exposure Fusion. Pacific Graphics, 2007.</p></div></section></article></div></main>
+<p>Both members will collaborate on pipeline integration, buffer reuse, correctness validation, profiling, and performance experiments. Stretch goals will be divided based on progress.</p></div></section>
+<section id="reference"><span class="number">10</span><div><h2>Reference</h2><p>Tom Mertens, Jan Kautz, and Frank Van Reeth. <a href="https://www.tommertens.com/old-academic/papers/exposure_fusion_reduced.pdf">Exposure Fusion</a>. Pacific Graphics, 2007.</p></div></section></article></div></main>
 <footer>Estella Xie &amp; Junhao Li · 15-618 · CUDA-Accelerated Multi-Exposure Image Fusion</footer></body></html>
