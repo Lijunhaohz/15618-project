@@ -1,51 +1,45 @@
-# GPU-Accelerated Multi-Exposure Fusion: Optimizing a Multi-Scale Image Pipeline
-Team: Estella Xie (ziyoux), Junhao Li (junhaoli)
+# CUDA-Accelerated Multi-Exposure Image Fusion
 
-Project URL: [Project webpage]
+**Team**
+
+Estella Xie (ziyoux), Junhao Li (junhaoli)
+
+**Project URL**
+
+[Project webpage](https://Lijunhaohz.github.io/15618-project/)
 
 ## Summary
 
-We will implement and optimize a multi-exposure image-fusion pipeline in C++/CUDA on an NVIDIA GPU. The project will investigate how kernel fusion, shared-memory tiling, and memory-efficient accumulation affect execution time and peak memory usage in a pipeline with spatial, cross-image, and cross-scale dependencies.
+We propose to implement and optimize a CUDA-based multi-exposure image fusion pipeline that combines photographs of the same scene taken at different exposure levels into a single image with well-preserved details in both bright and dark regions. Using NVIDIA GPUs, we will parallelize multi-scale image processing operations and investigate optimizations including kernel fusion, shared-memory tiling, and intermediate-buffer reuse to improve execution time and memory efficiency. We will evaluate the performance and scalability of our optimized implementation against a CPU reference and an unoptimized CUDA baseline.
 
 ## Background
-A single photograph may lose detail in bright or dark regions. Multi-exposure fusion combines photographs of the same scene taken at different exposures, selecting useful information from each to produce a single displayable image.
 
-We will follow the Exposure Fusion method of Mertens, Kautz, and Van Reeth. Each input receives a spatial weight map based on contrast, saturation, and well-exposedness. The weights are normalized across images, then blended with image content at multiple spatial scales:
-```
-Pre-aligned exposure images
-           ↓
-Quality-weight computation
-           ↓
-Cross-image weight normalization
-           ↓
-Gaussian weight pyramids + Laplacian image pyramids
-           ↓
-Weighted accumulation at each pyramid level
-           ↓
-Coarse-to-fine reconstruction
-           ↓
-Fused image
-```
+Photographs captured at a single exposure often lose details in either bright or dark regions. **Exposure fusion** addresses this problem by combining multiple images of the same scene at different exposures into a single image.
 
-The workload offers substantial pixel-level parallelism, but it is not a collection of independent pointwise operations. Filtering requires neighboring pixels, normalization couples different input images, and pyramid construction and reconstruction introduce dependencies between scales.
+We will implement the [Exposure Fusion algorithm](https://www.tommertens.com/old-academic/papers/exposure_fusion_reduced.pdf) by Mertens et al., which consists of four main stages:
 
-We will assume pre-aligned photographs of static scenes. Image registration, motion deghosting, and physical HDR radiance recovery are outside the core scope.
+1. **Weight computation:** Compute per-pixel weights based on contrast, saturation, and well-exposedness, then normalize weights across input images.
+2. **Pyramid construction:** Build Gaussian pyramids of the weight maps and Laplacian pyramids of the input images using filtering and downsampling.
+3. **Multi-scale blending:** Compute weighted combinations of the Laplacian pyramids at each level.
+4. **Reconstruction:** Progressively upsample and combine pyramid levels to produce the final image.
+
+These operations offer substantial GPU parallelism because most per-pixel computations and neighborhood filters can execute independently. But the pipeline also introduces dependencies between pyramid levels and repeated accesses to large intermediate arrays.
+
+We will first implement a CPU reference and a straightforward CUDA baseline with separate kernels for each stage, then optimize the GPU pipeline while preserving numerical correctness.
 
 ## The Challenge
-1. Neighborhood dependencies complicate fusion.
-Filtering, downsampling, and reconstruction require overlapping neighborhoods. Fusing these stages can eliminate global-memory intermediates, but requires larger input halos, redundant boundary computation, and block-local synchronization. We must determine when these costs outweigh the memory traffic saved. Boundary handling must remain consistent with the reference implementation.
 
-2. Parallelism changes across pyramid levels.
-Fine-resolution levels contain enough work to occupy the GPU, while coarse levels may be dominated by launch overhead and insufficient parallelism. A single block configuration or fusion strategy may therefore perform poorly across the full pipeline.
+The main challenge is efficiently mapping a multi-scale exposure fusion pipeline onto the GPU. Although individual pixel operations are highly parallel, dependencies across images, neighboring pixels, and pyramid levels introduce synchronization and memory overhead.
 
-3. Memory-efficient execution introduces scheduling trade-offs.
-Retaining every input image and its pyramids simplifies execution but increases memory consumption with image count. Processing inputs incrementally reduces storage, yet normalized weights depend on contributions from all exposures. A memory-efficient design must account for this dependency—for example, by first accumulating weight sums and subsequently recomputing or reloading individual weights.
+**1. Algorithmic Dependencies and Parallelism.** Weight normalization requires information from all input exposures, while Gaussian/Laplacian pyramid construction and reconstruction introduce sequential dependencies between levels. Although pixels within each level can be processed in parallel, these dependencies limit parallelism across stages and require synchronization. We will investigate how to minimize this overhead while preserving correctness.
 
-4. Fewer kernels do not necessarily mean faster execution.
-Fusion may increase register pressure, shared-memory consumption, or redundant work, reducing occupancy. We will compare selective fusion with separate execution rather than assuming maximal fusion is optimal.
+**2. Memory Access Patterns and Data Reuse.** The pipeline repeatedly accesses large images and intermediate pyramids, with relatively little computation per memory access, making it potentially memory-bandwidth-bound. Neighborhood filtering exhibits spatial locality, but naive implementations repeatedly load overlapping pixels from global memory. We will explore kernel fusion and shared-memory tiling to reduce memory traffic, while balancing register pressure, shared-memory usage, and GPU occupancy.
 
-Our central question is:
-How should computation and intermediate storage be organized to reduce latency and peak GPU memory while preserving the multi-exposure fusion algorithm?
+**3. Varying Parallelism Across Pyramid Levels.** Image dimensions shrink at each pyramid level, creating different GPU utilization challenges. Fine levels offer abundant parallelism but high memory traffic, while coarse levels may underutilize the GPU. Boundary handling can also introduce branch divergence. We will investigate level-specific kernel configurations to improve performance across different workload sizes.
+
+**4. Memory Capacity and Buffer Management.** Storing Gaussian and Laplacian pyramids for multiple exposures can consume substantial GPU memory. Reusing buffers and accumulating contributions requires careful handling of intermediate dependencies. For our streaming extension, cross-image weight normalization further complicates incremental processing and may require multiple passes.
+
+Through this project, we aim to understand how **algorithmic dependencies, memory bandwidth, and GPU resource constraints** affect performance, and how to balance execution speed, parallelism, and memory efficiency through CUDA optimizations.
 
 ## Resources
 We will develop the core CPU reference and CUDA implementations from scratch. Existing libraries will be used for image loading and saving, rather than for the core GPU fusion pipeline.
