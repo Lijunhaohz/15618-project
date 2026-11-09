@@ -6,7 +6,7 @@ Estella Xie (ziyoux), Junhao Li (junhaoli)
 
 **Project URL**
 
-[Project webpage](https://Lijunhaohz.github.io/15618-project/)
+[https://Lijunhaohz.github.io/15618-project/](https://Lijunhaohz.github.io/15618-project/)
 
 ## Summary
 
