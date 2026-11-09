@@ -23,17 +23,48 @@ def render(text):
             output.append('<p>' + inline(' '.join(paragraph)) + '</p>')
             paragraph.clear()
 
-    for line in text.splitlines() + ['']:
-        line = line.strip()
+    lines = text.splitlines() + ['']
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
+        quote = re.match(r'^>\s?(.*)$', line)
+        if quote:
+            flush()
+            if current_list:
+                output.append(f'</{current_list}>')
+                current_list = None
+            if table:
+                output.append('</tbody></table></div>')
+                table = False
+            quoted_lines = [quote[1]]
+            while i < len(lines):
+                quote = re.match(r'^>\s?(.*)$', lines[i].strip())
+                if not quote:
+                    break
+                quoted_lines.append(quote[1])
+                i += 1
+            output.append('<blockquote>' + render('\n'.join(quoted_lines)) + '</blockquote>')
+            continue
+
+        heading = re.match(r'^(#{3,6})\s+(.+?)\s*#*\s*$', line)
+        rule = re.fullmatch(r'(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,}', line)
         item = re.match(r'^(?:(\d+)\.|(-))\s+(.+)', line)
-        kind = ('ol' if item[1] else 'ul') if item else None
+        kind = ('ol' if item[1] else 'ul') if item and not rule else None
         if current_list and kind != current_list:
             output.append(f'</{current_list}>')
             current_list = None
         if table and not line.startswith('|'):
             output.append('</tbody></table></div>')
             table = False
-        if line.startswith('|'):
+        if heading:
+            flush()
+            level = len(heading[1])
+            output.append(f'<h{level}>' + inline(heading[2]) + f'</h{level}>')
+        elif rule:
+            flush()
+            output.append('<hr>')
+        elif line.startswith('|'):
             flush()
             cells = [c.strip() for c in line.strip('|').split('|')]
             if all(re.fullmatch(r':?-+:?', c) for c in cells):
@@ -45,7 +76,7 @@ def render(text):
             if not table:
                 output.append('</thead><tbody>')
                 table = True
-        elif item:
+        elif kind:
             flush()
             if not current_list:
                 output.append(f'<{kind}>')
@@ -61,6 +92,8 @@ def render(text):
 source = (ROOT / 'proposal.md').read_text()
 title = source.splitlines()[0].removeprefix('# ')
 parts = re.split(r'^## (.+)\s*$', source, flags=re.MULTILINE)
+project_url = re.search(r'(?m)^\*\*Project URL\*\*[ \t]*\n(?:[ \t]*\n)*[^\n]+', parts[0])
+project_url_html = render(project_url[0]) if project_url else ''
 navigation, sections = [], []
 for i in range(1, len(parts), 2):
     heading = parts[i].strip().rstrip(':').strip()
@@ -75,7 +108,7 @@ page = '''<!doctype html>
 <body><a class="skip" href="#proposal">Skip to proposal</a>
 <main><div class="hero">
 <h1>''' + html.escape(title) + '''</h1>
-<div class="team"><div><span>TEAM</span>Estella Xie <small>ziyoux</small><br>Junhao Li <small>junhaoli</small></div></div></div>
+<div class="team"><div><span>TEAM</span>Estella Xie <small>ziyoux</small><br>Junhao Li <small>junhaoli</small></div><div class="project-url">''' + project_url_html + '''</div></div></div>
 <div class="document" id="proposal"><aside><div class="eyebrow">IN THIS PROPOSAL</div><nav aria-label="Proposal sections">''' + ''.join(navigation) + '''</nav><a href="proposal.md">Markdown source ↗</a></aside><article>''' + '\n'.join(sections) + '''</article></div></main>
 <footer>Estella Xie &amp; Junhao Li · 15-618 · CUDA-Accelerated Multi-Exposure Image Fusion</footer></body></html>
 '''
