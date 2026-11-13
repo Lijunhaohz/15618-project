@@ -1,0 +1,5 @@
+If:
+  PathMatch: .*\.cu
+CompileFlags:
+  Remove: [-std=*]
+  Add: [-std=c++17]
