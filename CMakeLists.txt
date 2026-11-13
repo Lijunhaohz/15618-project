@@ -35,4 +35,32 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME skeleton_placeholders COMMAND skeleton_tests)
     add_test(NAME cli_help COMMAND exposure_fusion --help)
+
+    add_executable(cpu_weights_tests tests/cpu_weights_tests.cpp)
+    target_link_libraries(cpu_weights_tests PRIVATE fusion_core)
+    add_test(NAME cpu_weights COMMAND cpu_weights_tests)
+
+    add_executable(cpu_normalization_tests tests/cpu_normalization_tests.cpp)
+    target_link_libraries(cpu_normalization_tests PRIVATE fusion_core)
+    add_test(NAME cpu_normalization COMMAND cpu_normalization_tests)
+
+    add_executable(cpu_weight_pyramid_tests tests/cpu_weight_pyramid_tests.cpp)
+    target_link_libraries(cpu_weight_pyramid_tests PRIVATE fusion_core)
+    add_test(NAME cpu_weight_pyramid COMMAND cpu_weight_pyramid_tests)
+
+    add_executable(cpu_laplacian_pyramid_tests tests/cpu_laplacian_pyramid_tests.cpp)
+    target_link_libraries(cpu_laplacian_pyramid_tests PRIVATE fusion_core)
+    add_test(NAME cpu_laplacian_pyramid COMMAND cpu_laplacian_pyramid_tests)
+
+    add_executable(cpu_blend_tests tests/cpu_blend_tests.cpp)
+    target_link_libraries(cpu_blend_tests PRIVATE fusion_core)
+    add_test(NAME cpu_blend COMMAND cpu_blend_tests)
+
+    add_executable(cpu_reconstruction_tests tests/cpu_reconstruction_tests.cpp)
+    target_link_libraries(cpu_reconstruction_tests PRIVATE fusion_core)
+    add_test(NAME cpu_reconstruction COMMAND cpu_reconstruction_tests)
+
+    add_executable(cpu_fusion_tests tests/cpu_fusion_tests.cpp)
+    target_link_libraries(cpu_fusion_tests PRIVATE fusion_core)
+    add_test(NAME cpu_fusion COMMAND cpu_fusion_tests)
 endif()

@@ -34,6 +34,7 @@ public:
     virtual ImagePyramid build_laplacian_pyramid(
         const RgbImage& image, std::size_t levels) = 0;
 
+    // Weight pyramids must be normalized across exposures at each pixel.
     virtual ImagePyramid blend(
         const std::vector<WeightPyramid>& weights,
         const std::vector<ImagePyramid>& images) = 0;

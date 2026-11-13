@@ -23,9 +23,9 @@ See [Algorithm specification and inputs](docs/algorithm.md)
 ## Code skeleton
 
 The C++17 skeleton defines CPU and CUDA stage interfaces and image I/O
-placeholders. No image loading, fusion stages, or command-line processing are
-implemented yet; calling a placeholder reports an error instead of returning a
-result. The placeholder tests should be replaced as each stage is implemented.
+placeholders. The CPU fusion pipeline is implemented for in-memory RGB images;
+CUDA, image I/O, and command-line processing are not yet implemented. Calling
+a placeholder reports an error instead of returning a result.
 
 Build and run the CPU-only skeleton with CMake and a C++17 compiler:
 
