@@ -1,6 +1,4 @@
 #include "fusion/backend.hpp"
-#include "fusion/image_io.hpp"
-
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -42,9 +40,6 @@ int main() {
     bool ok = true;
     auto cpu = fusion::make_cpu_backend();
     ok &= check_backend(*cpu, "CPU", false);
-    ok &= expect_failure("image loading", "not implemented", [] { fusion::load_image(""); });
-    ok &= expect_failure("image saving", "not implemented", [] { fusion::save_image("", {}); });
-
 #ifdef FUSION_ENABLE_CUDA
     auto cuda = fusion::make_cuda_backend();
     ok &= check_backend(*cuda, "CUDA", true);

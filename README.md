@@ -20,14 +20,19 @@ overlapping data transfers with computation are stretch goals. See
 
 See [Algorithm specification and inputs](docs/algorithm.md)
 
-## Code skeleton
+## Building and running
 
-The C++17 skeleton defines CPU and CUDA stage interfaces and image I/O
-placeholders. The CPU fusion pipeline is implemented for in-memory RGB images;
-CUDA, image I/O, and command-line processing are not yet implemented. Calling
-a placeholder reports an error instead of returning a result.
+The CPU fusion pipeline and image I/O are implemented. The loader accepts
+8-bit RGB PNG and binary P6 PPM with maximum value 255; other formats, PNG
+alpha, and other bit depths are rejected. Saving supports the same formats,
+clamping finite output values to `[0, 1]` and rounding to 8-bit. Encoded RGB
+values are used directly without color or gamma conversion.
 
-Build and run the CPU-only skeleton with CMake and a C++17 compiler:
+The command-line application currently uses the CPU backend. CUDA is not yet
+implemented; calling a CUDA placeholder reports an error.
+
+Build and run the CPU-only project with CMake, C99 and C++17 compilers, and
+the libpng development package (including its zlib dependency):
 
 ```sh
 cmake -S . -B build
@@ -35,6 +40,37 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/exposure_fusion --help
 ```
+
+For example, fuse all three supplied exposures in a directory:
+
+```sh
+mkdir -p output
+./build/exposure_fusion --output output/fused.png data/basic-test-3/
+```
+
+Individual input files may also be specified:
+
+```sh
+mkdir -p output
+./build/exposure_fusion --output output/fused.png \
+  data/basic-test-3/memorial00.png \
+  data/basic-test-3/memorial03.png \
+  data/basic-test-3/memorial06.png
+```
+
+Add `--levels N` to select a pyramid depth; otherwise the application uses up
+to five levels, stopping when both dimensions reach one. Inputs must be aligned
+and have the same dimensions. File and directory inputs can be mixed; each
+directory is read non-recursively, in filename order. Regular files with `.md`,
+`.txt`, `.json`, or `.csv` extensions and `.DS_Store` are ignored as metadata.
+All other regular files in an input directory must be supported PNG or PPM
+images; an unsupported file causes an error rather than being silently
+omitted. Empty input directories also cause an error.
+
+The output path must not refer to an input file, including an image discovered
+in an input directory; an existing separate output file will be overwritten.
+Keep output outside input directories. Use `--` before input paths beginning
+with a hyphen.
 
 On a machine with the CUDA toolkit, configure with
 `cmake -S . -B build -DFUSION_ENABLE_CUDA=ON` to compile the CUDA skeleton.
