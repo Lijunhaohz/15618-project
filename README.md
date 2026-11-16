@@ -28,8 +28,11 @@ alpha, and other bit depths are rejected. Saving supports the same formats,
 clamping finite output values to `[0, 1]` and rounding to 8-bit. Encoded RGB
 values are used directly without color or gamma conversion.
 
-The command-line application currently uses the CPU backend. CUDA is not yet
-implemented; calling a CUDA placeholder reports an error.
+The command-line application uses the CPU backend by default. Select the CUDA
+backend with `--backend cuda` after building with CUDA enabled; unavailable
+CUDA devices or a CPU-only build produce an error rather than falling back.
+The CUDA pipeline uses separate kernels and keeps its pyramid intermediates on
+the device until the final floating-point image is returned.
 
 Build and run the CPU-only project with CMake, C99 and C++17 compilers, and
 the libpng development package (including its zlib dependency):
@@ -67,14 +70,39 @@ All other regular files in an input directory must be supported PNG or PPM
 images; an unsupported file causes an error rather than being silently
 omitted. Empty input directories also cause an error.
 
+For example, after a CUDA-enabled build:
+
+```sh
+./build/exposure_fusion --backend cuda --output output/fused.png data/basic-test-3/
+```
+
 The output path must not refer to an input file, including an image discovered
 in an input directory; an existing separate output file will be overwritten.
 Keep output outside input directories. Use `--` before input paths beginning
 with a hyphen.
 
 On a machine with the CUDA toolkit, configure with
-`cmake -S . -B build -DFUSION_ENABLE_CUDA=ON` to compile the CUDA skeleton.
-The CUDA stages are placeholders as well; CUDA is disabled by default.
+`cmake -S . -B build -DFUSION_ENABLE_CUDA=ON` to compile the CUDA backend.
+CUDA is disabled by default. CUDA tests require an accessible GPU. CUDA
+compilation disables fused multiply-add to better match the CPU reference's
+floating-point evaluation. If `nvcc` is not on `PATH` or the default host
+compiler is unsupported by the toolkit, specify `CUDACXX` and a compatible
+`CMAKE_CUDA_HOST_COMPILER` when configuring.
+
+The CUDA weight tests compare every raw and normalized map against the CPU.
+Raw weights use an absolute tolerance of `1e-10` plus `3e-5` relative error;
+normalized weights use `2e-5` absolute error. These preliminary tolerances allow
+for float32 and CPU/GPU math-library differences; they are not final pipeline
+correctness tolerances.
+The CUDA pyramid tests compare every Gaussian weight, Gaussian image, and
+Laplacian image level with the CPU using a `1e-6` absolute tolerance, allowing
+for float32 rounding differences.
+Blending and reconstruction tests use `1e-6` absolute error with identical
+CPU-generated stage inputs, and `2e-5` for the chain of CUDA stages, where
+earlier weight-computation differences also contribute.
+The CUDA fusion integration test uses the same `2e-5` preliminary absolute
+tolerance against CPU fusion and checks agreement with the individual CUDA
+stages to `1e-6`.
 
 ## Project Website
 

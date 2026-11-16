@@ -16,19 +16,22 @@
 namespace {
 
 void print_help() {
-    std::cout << "Usage: exposure_fusion --output FILE [--levels N] [--] INPUT...\n"
-              << "Fuse aligned 8-bit RGB PNG or P6 PPM images using the CPU.\n"
+    std::cout << "Usage: exposure_fusion --output FILE [--backend cpu|cuda] [--levels N] [--] INPUT...\n"
+              << "Fuse aligned 8-bit RGB PNG or P6 PPM images.\n"
               << "Inputs may be image files, directories, or a mixture of both.\n"
               << "  -o, --output FILE  Output PNG or PPM path (required)\n"
+              << "  --backend NAME     cpu (default) or cuda\n"
               << "  --levels N         Pyramid levels; defaults to at most five\n"
               << "  --                  Treat remaining arguments as input paths\n"
               << "  -h, --help         Show this help\n";
 }
 
 struct Arguments {
+    enum class Backend { cpu, cuda };
     std::string output;
     std::vector<std::string> inputs;
     fusion::FusionOptions options;
+    Backend backend = Backend::cpu;
 };
 
 std::string_view option_value(int argc, char* argv[], int& index, std::string_view option) {
@@ -42,6 +45,7 @@ Arguments parse_arguments(int argc, char* argv[]) {
     Arguments args;
     bool positional_only = false;
     bool output_set = false;
+    bool backend_set = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         if (!positional_only && arg == "--") {
@@ -50,6 +54,17 @@ Arguments parse_arguments(int argc, char* argv[]) {
             if (output_set) throw std::invalid_argument("Output path specified more than once");
             args.output = option_value(argc, argv, i, arg);
             output_set = true;
+        } else if (!positional_only && arg == "--backend") {
+            if (backend_set) throw std::invalid_argument("Backend specified more than once");
+            const auto value = option_value(argc, argv, i, arg);
+            if (value == "cpu") {
+                args.backend = Arguments::Backend::cpu;
+            } else if (value == "cuda") {
+                args.backend = Arguments::Backend::cuda;
+            } else {
+                throw std::invalid_argument("Backend must be cpu or cuda");
+            }
+            backend_set = true;
         } else if (!positional_only && arg == "--levels") {
             if (args.options.levels) throw std::invalid_argument("Levels specified more than once");
             const auto value = option_value(argc, argv, i, arg);
@@ -127,12 +142,13 @@ int main(int argc, char* argv[]) {
         auto args = parse_arguments(argc, argv);
         args.inputs = expand_inputs(args.inputs);
         check_output_path(args);
+        auto backend = args.backend == Arguments::Backend::cuda
+            ? fusion::make_cuda_backend() : fusion::make_cpu_backend();
         std::vector<fusion::RgbImage> images;
         images.reserve(args.inputs.size());
         for (const auto& input : args.inputs) {
             images.push_back(fusion::load_image(input));
         }
-        auto backend = fusion::make_cpu_backend();
         const auto fused = backend->fuse(images, args.options);
         fusion::save_image(args.output, fused);
         std::cout << "Saved fused image to " << args.output << '\n';

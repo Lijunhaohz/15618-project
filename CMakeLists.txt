@@ -3,7 +3,7 @@ project(exposure_fusion LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(FUSION_ENABLE_CUDA "Build the CUDA backend skeleton" OFF)
+option(FUSION_ENABLE_CUDA "Build the CUDA backend" OFF)
 
 find_package(PNG REQUIRED)
 
@@ -20,6 +20,7 @@ target_link_libraries(fusion_core PRIVATE PNG::PNG)
 if(FUSION_ENABLE_CUDA)
     enable_language(CUDA)
     target_sources(fusion_core PRIVATE src/cuda_backend.cu)
+    target_compile_options(fusion_core PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
     set_target_properties(fusion_core PROPERTIES
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED YES
@@ -42,6 +43,7 @@ if(BUILD_TESTING)
     add_test(NAME cli_help COMMAND exposure_fusion --help)
     add_test(NAME cli_integration
         COMMAND ${CMAKE_COMMAND} "-DEXE=$<TARGET_FILE:exposure_fusion>"
+                "-DCUDA_ENABLED=${FUSION_ENABLE_CUDA}"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.cmake")
 
     add_executable(cpu_weights_tests tests/cpu_weights_tests.cpp)
@@ -51,6 +53,21 @@ if(BUILD_TESTING)
     add_executable(cpu_normalization_tests tests/cpu_normalization_tests.cpp)
     target_link_libraries(cpu_normalization_tests PRIVATE fusion_core)
     add_test(NAME cpu_normalization COMMAND cpu_normalization_tests)
+
+    if(FUSION_ENABLE_CUDA)
+        add_executable(cuda_weights_tests tests/cuda_weights_tests.cpp)
+        target_link_libraries(cuda_weights_tests PRIVATE fusion_core)
+        add_test(NAME cuda_weights COMMAND cuda_weights_tests)
+        add_executable(cuda_pyramid_tests tests/cuda_pyramid_tests.cpp)
+        target_link_libraries(cuda_pyramid_tests PRIVATE fusion_core)
+        add_test(NAME cuda_pyramids COMMAND cuda_pyramid_tests)
+        add_executable(cuda_blend_reconstruction_tests tests/cuda_blend_reconstruction_tests.cpp)
+        target_link_libraries(cuda_blend_reconstruction_tests PRIVATE fusion_core)
+        add_test(NAME cuda_blend_reconstruction COMMAND cuda_blend_reconstruction_tests)
+        add_executable(cuda_fusion_tests tests/cuda_fusion_tests.cpp)
+        target_link_libraries(cuda_fusion_tests PRIVATE fusion_core)
+        add_test(NAME cuda_fusion COMMAND cuda_fusion_tests)
+    endif()
 
     add_executable(cpu_weight_pyramid_tests tests/cpu_weight_pyramid_tests.cpp)
     target_link_libraries(cpu_weight_pyramid_tests PRIVATE fusion_core)
