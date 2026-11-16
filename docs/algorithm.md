@@ -1,11 +1,6 @@
-# Algorithm specification and inputs
+# Algorithm and I/O specification
 
-## Milestone algorithm specification
-
-The following conventions define the intended CPU reference and separate-kernel
-CUDA baseline. They are implementation requirements, not claims that the
-pipeline is already complete. Both implementations must use the same inputs,
-parameters, and conventions.
+## The image fusion algorithm
 
 ### Input and numerical conventions
 
@@ -70,15 +65,21 @@ $$
 Adding epsilon before normalization gives equal weights when every exposure
 has zero contrast or saturation.
 
-### Pyramids, blending, and reconstruction
+### Building pyramids
 
-Use the separable five-tap Gaussian kernel in each dimension:
+In this section, we describe how to build pyramids for images and weight maps, which are used for multi-scale blending.
+- For each normalized weight map, we build a Gaussian pyramid using the same reduce operation.
+- For each RGB image, we build a Laplacian pyramid by first constructing a Gaussian pyramid and then taking differences between levels.
+
+![](imgs/laplacian.png)
+
+We use the separable five-tap **Gaussian kernel** in each dimension:
 
 $$
 h[-2], h[-1], h[0], h[1], h[2] = \frac{1}{16}[1, 4, 6, 4, 1].
 $$
 
-For all neighborhood operations, reflect indices without repeating the edge:
+For all neighborhood operations, **reflect indices** without repeating the edge:
 for length $n > 1$, the sequence around the left edge is
 `... 2, 1, 0, 1, 2 ...`; repeat this reflection as needed. For $n = 1$, every
 index maps to zero.
@@ -126,6 +127,10 @@ G^I_{i,\ell} - \operatorname{expand}(G^I_{i,\ell+1}), & 0 \le \ell < K-1, \\
 G^I_{i,K-1}, & \ell = K-1.
 \end{cases}
 $$
+
+### Blending and reconstruction
+
+![](imgs/blending.png)
 
 Blend each level, applying the scalar weight to every RGB channel, then
 reconstruct from coarse to fine:
