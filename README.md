@@ -76,6 +76,21 @@ For example, after a CUDA-enabled build:
 ./build/exposure_fusion --backend cuda --output output/fused.png data/basic-test-3/
 ```
 
+Alternatively, on Unix, build and run CUDA in one command from the project root:
+
+```sh
+./scripts/run_cuda.sh --output fused.png data/basic-test-3/
+```
+
+The script forwards image paths and options such as `--levels` to the CLI,
+selects CUDA explicitly, and uses `build/cuda` by default. It checks `PATH`
+and `/usr/local/cuda/bin/nvcc` for the CUDA compiler; `CUDACXX`,
+`CUDAHOSTCXX`, and `FUSION_CUDA_BUILD_DIR` can override its compiler, host
+compiler, and build directory. For CUDA 11.7 or 11.8 it selects `g++-11` when
+available and no host compiler was specified. CMake caches compiler choices,
+so use a fresh build directory when changing them. The output path must have an
+existing parent directory; as with the CLI, an existing output is overwritten.
+
 The output path must not refer to an input file, including an image discovered
 in an input directory; an existing separate output file will be overwritten.
 Keep output outside input directories. Use `--` before input paths beginning
@@ -146,6 +161,49 @@ ctest --test-dir build -R '^cuda_fusion_validation_' -V
 
 The real-image test is registered when all three bracket files are present.
 The CUDA CLI integration test also loads that bracket and writes a PNG.
+
+### Preliminary CUDA timings
+
+On November 16, 2026, the separate-kernel baseline ran on the RTX 2080
+(8 GiB), driver 550.67, CUDA 11.7.99, GCC 11.5, architecture 75, with
+`CMAKE_BUILD_TYPE` unset and fused multiply-add disabled. The workload was the
+three Memorial images above, 484 x 714 pixels, using five pyramid levels.
+Alignment and usage cautions above also apply to this workload.
+
+The benchmark loaded the PNGs and computed the CPU reference before timing.
+After two warmups of each path, it ran ten trials, alternating an
+event-instrumented fusion call with a normal, uninstrumented `fuse()` call.
+The table gives the median and range across those trials, in milliseconds.
+
+| Measurement | Median | Min | Max |
+|---|---:|---:|---:|
+| Quality weights, CUDA events | 0.111 | 0.109 | 0.115 |
+| Normalization, CUDA events | 0.036 | 0.036 | 0.039 |
+| Image and weight Gaussian pyramids, CUDA events | 1.476 | 1.455 | 1.554 |
+| Laplacian pyramids, CUDA events | 1.189 | 1.177 | 1.222 |
+| Blending, CUDA events | 0.271 | 0.267 | 0.277 |
+| Reconstruction, CUDA events | 0.703 | 0.693 | 0.740 |
+| Full device pipeline, CUDA events | 3.793 | 3.750 | 3.927 |
+| Full uninstrumented `fuse()`, host wall clock | 39.996 | 39.749 | 41.058 |
+
+Events bracket the pipeline after the input upload and before the output
+download. Stage intervals can include device work for small error-flag
+transfers and GPU idle gaps while the host synchronizes, allocates memory, or
+submits more work; they are **not** pure kernel execution times. The wall-clock
+interval includes
+input validation, device allocations, host-to-device and device-to-host image
+transfers, synchronization, and cleanup, but excludes PNG I/O and backend
+construction. Independent stage medians need not sum to the pipeline median.
+The last profiled and uninstrumented outputs each matched the CPU with max
+error `3.58e-7` and RMSE `1.74e-8`. These are preliminary measurements on a
+shared desktop GPU, not speedup claims.
+
+With a CUDA-enabled build, reproduce them with:
+
+```sh
+./build/cuda_benchmark data/basic-test-3/memorial00.png \
+  data/basic-test-3/memorial03.png data/basic-test-3/memorial06.png
+```
 
 ## Project Website
 

@@ -2,6 +2,7 @@
  * Implements the CUDA backend for image fusion.
  */
 #include "fusion/backend.hpp"
+#include "cuda_timing.hpp"
 
 #include <cuda_runtime.h>
 
@@ -21,6 +22,77 @@ void check_cuda(cudaError_t status, const char* operation) {
         throw std::runtime_error(std::string(operation) + ": " + cudaGetErrorString(status));
     }
 }
+
+void check_cuda_device() {
+    int count = 0;
+    check_cuda(cudaGetDeviceCount(&count), "CUDA backend unavailable (cudaGetDeviceCount)");
+    if (count == 0) throw std::runtime_error("CUDA backend unavailable: no CUDA device detected");
+}
+
+class CudaEvent {
+public:
+    CudaEvent() {
+        check_cuda(cudaEventCreate(&event_), "cudaEventCreate");
+    }
+
+    CudaEvent(const CudaEvent&) = delete;
+    CudaEvent& operator=(const CudaEvent&) = delete;
+
+    ~CudaEvent() {
+        if (event_) {
+            const auto status = cudaEventDestroy(event_);
+            if (status != cudaSuccess) {
+                std::fprintf(stderr, "cudaEventDestroy during cleanup: %s\n",
+                             cudaGetErrorString(status));
+            }
+        }
+    }
+
+    cudaEvent_t get() const { return event_; }
+
+    void release() {
+        const auto event = event_;
+        event_ = nullptr;
+        check_cuda(cudaEventDestroy(event), "cudaEventDestroy");
+    }
+
+private:
+    cudaEvent_t event_ = nullptr;
+};
+
+class StageEvents {
+public:
+    StageEvents() {
+        events_.reserve(7);
+        for (int i = 0; i < 7; ++i) events_.push_back(std::make_unique<CudaEvent>());
+    }
+
+    void record(std::size_t index) {
+        check_cuda(cudaEventRecord(events_[index]->get()), "cudaEventRecord");
+    }
+
+    void finish(detail::CudaStageTimings& timings) {
+        check_cuda(cudaEventSynchronize(events_.back()->get()), "cudaEventSynchronize");
+        timings.quality_ms = elapsed(0, 1);
+        timings.normalization_ms = elapsed(1, 2);
+        timings.gaussian_ms = elapsed(2, 3);
+        timings.laplacian_ms = elapsed(3, 4);
+        timings.blend_ms = elapsed(4, 5);
+        timings.reconstruction_ms = elapsed(5, 6);
+        timings.pipeline_ms = elapsed(0, 6);
+        for (auto& event : events_) event->release();
+    }
+
+private:
+    float elapsed(std::size_t start, std::size_t end) const {
+        float milliseconds = 0.0f;
+        check_cuda(cudaEventElapsedTime(&milliseconds, events_[start]->get(), events_[end]->get()),
+                   "cudaEventElapsedTime");
+        return milliseconds;
+    }
+
+    std::vector<std::unique_ptr<CudaEvent>> events_;
+};
 
 template <typename T>
 class DeviceBuffer {
@@ -723,6 +795,17 @@ public:
     }
 
     RgbImage fuse(const std::vector<RgbImage>& images, const FusionOptions& options) override {
+        return fuse_impl(images, options, nullptr);
+    }
+
+    RgbImage fuse_profiled(const std::vector<RgbImage>& images, const FusionOptions& options,
+                           detail::CudaStageTimings& timings) {
+        return fuse_impl(images, options, &timings);
+    }
+
+private:
+    RgbImage fuse_impl(const std::vector<RgbImage>& images, const FusionOptions& options,
+                       detail::CudaStageTimings* timings) {
         validate_images(images);
         const auto width = images.front().width;
         const auto height = images.front().height;
@@ -734,6 +817,8 @@ public:
         const auto pixels = width * height;
         const auto weight_count = checked_product(pixels, exposures);
         const auto image_count = checked_product(weight_count, 3);
+        std::unique_ptr<StageEvents> events;
+        if (timings) events = std::make_unique<StageEvents>();
 
         // All pyramid levels remain device-resident until reconstruction finishes.
         // Per-level buffers store exposure planes consecutively, with interleaved RGB.
@@ -753,6 +838,7 @@ public:
                                   cudaMemcpyHostToDevice), "copy images to CUDA");
         }
 
+        if (events) events->record(0);
         grayscale_kernel<<<block_count(weight_count), threads_per_block>>>(
             gaussian_images[0].pixels->get(), gray.get(), weight_count);
         check_kernel("CUDA grayscale kernel");
@@ -762,6 +848,7 @@ public:
             width, height, weight_count);
         check_kernel("CUDA weight kernel");
 
+        if (events) events->record(1);
         check_cuda(cudaMemset(invalid.get(), 0, sizeof(int)), "initialize CUDA sum flag");
 
         normalize_kernel<<<block_count(pixels), threads_per_block>>>(
@@ -775,6 +862,7 @@ public:
             throw std::invalid_argument("Weight sum must be finite and positive at every pixel");
         }
 
+        if (events) events->record(2);
         // Reduce each exposure independently using the same dimensions at every level.
         for (std::size_t level = 1; level < levels; ++level) {
             const auto& previous_image = gaussian_images.back();
@@ -799,6 +887,7 @@ public:
             gaussian_weights.push_back({next_width, next_height, std::move(next_weight)});
         }
 
+        if (events) events->record(3);
         // The coarsest Laplacian level is the Gaussian level; finer levels subtract expansion.
         for (std::size_t level = 0; level < levels; ++level) {
             const auto& fine = gaussian_images[level];
@@ -826,6 +915,7 @@ public:
             laplacian.push_back({fine.width, fine.height, std::move(current)});
         }
 
+        if (events) events->record(4);
         check_cuda(cudaMemset(invalid.get(), 0, sizeof(int)), "initialize CUDA non-finite flag");
         for (std::size_t level = 0; level < levels; ++level) {
             const auto& image = laplacian[level];
@@ -840,7 +930,12 @@ public:
             blended.push_back({image.width, image.height, std::move(output)});
         }
 
+        if (events) events->record(5);
         auto reconstructed = reconstruct_device(blended, invalid);
+        if (events) {
+            events->record(6);
+            events->finish(*timings);
+        }
         RgbImage result{width, height, std::vector<float>(pixels * 3)};
         check_cuda(cudaMemcpy(result.pixels.data(), reconstructed.pixels,
                               pixels * 3 * sizeof(float), cudaMemcpyDeviceToHost),
@@ -859,10 +954,15 @@ public:
 }  // namespace
 
 std::unique_ptr<Backend> make_cuda_backend() {
-    int count = 0;
-    check_cuda(cudaGetDeviceCount(&count), "CUDA backend unavailable (cudaGetDeviceCount)");
-    if (count == 0) throw std::runtime_error("CUDA backend unavailable: no CUDA device detected");
+    check_cuda_device();
     return std::make_unique<CudaBackend>();
+}
+
+RgbImage detail::profile_cuda_fuse(const std::vector<RgbImage>& images,
+                                   const FusionOptions& options, CudaStageTimings& timings) {
+    check_cuda_device();
+    CudaBackend backend;
+    return backend.fuse_profiled(images, options, timings);
 }
 
 }  // namespace fusion

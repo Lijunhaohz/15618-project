@@ -1,4 +1,5 @@
 #include "fusion/backend.hpp"
+#include "cuda_timing.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -93,6 +94,28 @@ int main() {
                                    assemble_stages(*cuda, images, levels), 1e-6);
     }
     ok &= cpu_errors.compare("automatic depth", cuda->fuse(images, {}), cpu->fuse(images, {}), 2e-5);
+    for (const std::size_t levels : {std::size_t{1}, std::size_t{5}}) {
+        fusion::FusionOptions options;
+        options.levels = levels;
+        fusion::detail::CudaStageTimings timings;
+        const auto profiled = fusion::detail::profile_cuda_fuse(images, options, timings);
+        ok &= stage_errors.compare("profiled CUDA fusion", profiled, cuda->fuse(images, options), 1e-6);
+        const float stages[] = {timings.quality_ms, timings.normalization_ms, timings.gaussian_ms,
+                                timings.laplacian_ms, timings.blend_ms, timings.reconstruction_ms};
+        float total = 0.0f;
+        for (const float stage : stages) {
+            if (!std::isfinite(stage) || stage < 0.0f) {
+                std::cerr << "Invalid stage timing\n";
+                ok = false;
+            }
+            total += stage;
+        }
+        if (!std::isfinite(timings.pipeline_ms) || timings.pipeline_ms <= 0.0f ||
+            std::abs(total - timings.pipeline_ms) > 0.01f) {
+            std::cerr << "Pipeline timing does not match stage intervals\n";
+            ok = false;
+        }
+    }
     ok &= stage_errors.compare("single exposure", cuda->fuse({images[0]}, {}), images[0], 1e-6);
     const fusion::RgbImage tiny{1, 1, {0.1f, 0.5f, 1.0f}};
     ok &= stage_errors.compare("single pixel", cuda->fuse({tiny}, {}), tiny, 1e-6);

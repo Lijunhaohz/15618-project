@@ -7,6 +7,10 @@ option(FUSION_ENABLE_CUDA "Build the CUDA backend" OFF)
 
 find_package(PNG REQUIRED)
 
+if(FUSION_ENABLE_CUDA)
+    enable_language(CUDA)
+endif()
+
 add_library(fusion_core
     src/cpu_backend.cpp
     src/image_io.cpp
@@ -18,7 +22,6 @@ set_target_properties(fusion_core PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED Y
 target_link_libraries(fusion_core PRIVATE PNG::PNG)
 
 if(FUSION_ENABLE_CUDA)
-    enable_language(CUDA)
     target_sources(fusion_core PRIVATE src/cuda_backend.cu)
     target_compile_options(fusion_core PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
     set_target_properties(fusion_core PROPERTIES
@@ -32,6 +35,12 @@ endif()
 add_executable(exposure_fusion src/main.cpp)
 target_link_libraries(exposure_fusion PRIVATE fusion_core)
 
+if(FUSION_ENABLE_CUDA)
+    add_executable(cuda_benchmark benchmarks/cuda_benchmark.cpp)
+    target_include_directories(cuda_benchmark PRIVATE src)
+    target_link_libraries(cuda_benchmark PRIVATE fusion_core)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(skeleton_tests tests/skeleton_tests.cpp)
@@ -41,6 +50,11 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME skeleton_placeholders COMMAND skeleton_tests)
     add_test(NAME cli_help COMMAND exposure_fusion --help)
+    if(UNIX)
+        add_test(NAME cuda_runner_script
+            COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda_runner_test.sh"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cuda.sh")
+    endif()
     add_test(NAME cli_integration
         COMMAND ${CMAKE_COMMAND} "-DEXE=$<TARGET_FILE:exposure_fusion>"
                 "-DCUDA_ENABLED=${FUSION_ENABLE_CUDA}"
@@ -66,6 +80,7 @@ if(BUILD_TESTING)
         target_link_libraries(cuda_blend_reconstruction_tests PRIVATE fusion_core)
         add_test(NAME cuda_blend_reconstruction COMMAND cuda_blend_reconstruction_tests)
         add_executable(cuda_fusion_tests tests/cuda_fusion_tests.cpp)
+        target_include_directories(cuda_fusion_tests PRIVATE src)
         target_link_libraries(cuda_fusion_tests PRIVATE fusion_core)
         add_test(NAME cuda_fusion COMMAND cuda_fusion_tests)
         add_executable(cuda_fusion_validation_tests tests/cuda_fusion_validation_tests.cpp)
