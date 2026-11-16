@@ -35,6 +35,10 @@ endif()
 add_executable(exposure_fusion src/main.cpp)
 target_link_libraries(exposure_fusion PRIVATE fusion_core)
 
+add_executable(cpu_benchmark benchmarks/cpu_benchmark.cpp)
+target_include_directories(cpu_benchmark PRIVATE src)
+target_link_libraries(cpu_benchmark PRIVATE fusion_core)
+
 if(FUSION_ENABLE_CUDA)
     add_executable(cuda_benchmark benchmarks/cuda_benchmark.cpp)
     target_include_directories(cuda_benchmark PRIVATE src)
@@ -53,7 +57,16 @@ if(BUILD_TESTING)
     if(UNIX)
         add_test(NAME cuda_runner_script
             COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda_runner_test.sh"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cuda.sh")
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cuda_sample.sh" cuda)
+        add_test(NAME cpu_runner_script
+            COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda_runner_test.sh"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cpu_sample.sh" cpu)
+        add_test(NAME cuda_test_benchmark_runner_script
+            COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda_test_benchmark_runner_test.sh"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cuda_benchmark.sh" cuda)
+        add_test(NAME cpu_test_benchmark_runner_script
+            COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda_test_benchmark_runner_test.sh"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_cpu_benchmark.sh" cpu)
     endif()
     add_test(NAME cli_integration
         COMMAND ${CMAKE_COMMAND} "-DEXE=$<TARGET_FILE:exposure_fusion>"
@@ -69,7 +82,14 @@ if(BUILD_TESTING)
     target_link_libraries(cpu_normalization_tests PRIVATE fusion_core)
     add_test(NAME cpu_normalization COMMAND cpu_normalization_tests)
 
+    add_test(NAME cpu_benchmark_inputs
+        COMMAND ${CMAKE_COMMAND} "-DEXE=$<TARGET_FILE:cpu_benchmark>"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda_benchmark_test.cmake")
+
     if(FUSION_ENABLE_CUDA)
+        add_test(NAME cuda_benchmark_inputs
+            COMMAND ${CMAKE_COMMAND} "-DEXE=$<TARGET_FILE:cuda_benchmark>"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda_benchmark_test.cmake")
         add_executable(cuda_weights_tests tests/cuda_weights_tests.cpp)
         target_link_libraries(cuda_weights_tests PRIVATE fusion_core)
         add_test(NAME cuda_weights COMMAND cuda_weights_tests)

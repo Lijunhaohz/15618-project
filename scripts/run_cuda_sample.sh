@@ -1,4 +1,8 @@
 #!/bin/sh
+
+# Example usage:
+#    ./scripts/run_cuda_sample.sh --output fused.png data/basic-test-3/
+
 set -eu
 
 if [ "$#" -eq 0 ] || { [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; }; then

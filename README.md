@@ -22,188 +22,70 @@ See [Algorithm specification and inputs](docs/algorithm.md)
 
 ## Building and running
 
-The CPU fusion pipeline and image I/O are implemented. The loader accepts
-8-bit RGB PNG and binary P6 PPM with maximum value 255; other formats, PNG
-alpha, and other bit depths are rejected. Saving supports the same formats,
-clamping finite output values to `[0, 1]` and rounding to 8-bit. Encoded RGB
-values are used directly without color or gamma conversion.
-
-The command-line application uses the CPU backend by default. Select the CUDA
-backend with `--backend cuda` after building with CUDA enabled; unavailable
-CUDA devices or a CPU-only build produce an error rather than falling back.
-The CUDA pipeline uses separate kernels and keeps its pyramid intermediates on
-the device until the final floating-point image is returned.
-
-Build and run the CPU-only project with CMake, C99 and C++17 compilers, and
-the libpng development package (including its zlib dependency):
+Requirements: CMake, C99 and C++17 compilers, and libpng. CUDA execution also
+requires the CUDA toolkit, a compatible host compiler, and an accessible GPU.
+From the project root, build and run the CPU backend:
 
 ```sh
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
-./build/exposure_fusion --help
+./scripts/run_cpu_sample.sh --output fused.png data/basic-test-3/
 ```
 
-For example, fuse all three supplied exposures in a directory:
+On Unix, build and run the CUDA backend in one command:
 
 ```sh
-mkdir -p output
-./build/exposure_fusion --output output/fused.png data/basic-test-3/
+./scripts/run_cuda_sample.sh --output fused.png data/basic-test-3/
 ```
 
-Individual input files may also be specified:
+The script uses `build/cuda` by default. Set `CUDACXX`, `CUDAHOSTCXX`, or
+`FUSION_CUDA_BUILD_DIR` to override its compiler, host compiler, or build
+directory; use a fresh build directory when changing compilers. A CUDA request
+fails explicitly if CUDA is unavailable, rather than falling back to CPU.
+The CPU script uses `build/cpu` by default, overridable with
+`FUSION_CPU_BUILD_DIR`.
+
+Inputs must be aligned, identically sized 8-bit RGB PNG or binary P6 PPM
+images. Files and directories can be mixed; directories are read
+non-recursively in filename order, ignoring `.md`, `.txt`, `.json`, `.csv`,
+and `.DS_Store` metadata. Other unsupported files and empty directories cause
+errors. Output is PNG or PPM; existing output is overwritten, so keep it
+outside input directories. Add `--levels N` to select pyramid depth (default:
+up to five), or use `--help` for options.
+
+After running the corresponding script, build and run tests and timings:
 
 ```sh
-mkdir -p output
-./build/exposure_fusion --output output/fused.png \
-  data/basic-test-3/memorial00.png \
-  data/basic-test-3/memorial03.png \
-  data/basic-test-3/memorial06.png
+./scripts/run_cpu_benchmark.sh
+./scripts/run_cuda_benchmark.sh
 ```
 
-Add `--levels N` to select a pyramid depth; otherwise the application uses up
-to five levels, stopping when both dimensions reach one. Inputs must be aligned
-and have the same dimensions. File and directory inputs can be mixed; each
-directory is read non-recursively, in filename order. Regular files with `.md`,
-`.txt`, `.json`, or `.csv` extensions and `.DS_Store` are ignored as metadata.
-All other regular files in an input directory must be supported PNG or PPM
-images; an unsupported file causes an error rather than being silently
-omitted. Empty input directories also cause an error.
+Each benchmark script uses its runner's build directory. Both default to
+`data/basic-test-3/`; pass image files or directories as arguments to select
+other inputs. The CPU benchmark measures `fuse()` wall time (excluding image
+I/O), with two warmups and ten trials; it does not report individual stages.
+The real-image test
+requires the three supplied Memorial images; their alignment is assumed, not
+independently verified. See the [Memorial notes](data/memorial/README.md) for
+provenance and usage cautions.
 
-For example, after a CUDA-enabled build:
+### Preliminary results
 
-```sh
-./build/exposure_fusion --backend cuda --output output/fused.png data/basic-test-3/
-```
-
-Alternatively, on Unix, build and run CUDA in one command from the project root:
-
-```sh
-./scripts/run_cuda.sh --output fused.png data/basic-test-3/
-```
-
-The script forwards image paths and options such as `--levels` to the CLI,
-selects CUDA explicitly, and uses `build/cuda` by default. It checks `PATH`
-and `/usr/local/cuda/bin/nvcc` for the CUDA compiler; `CUDACXX`,
-`CUDAHOSTCXX`, and `FUSION_CUDA_BUILD_DIR` can override its compiler, host
-compiler, and build directory. For CUDA 11.7 or 11.8 it selects `g++-11` when
-available and no host compiler was specified. CMake caches compiler choices,
-so use a fresh build directory when changing them. The output path must have an
-existing parent directory; as with the CLI, an existing output is overwritten.
-
-The output path must not refer to an input file, including an image discovered
-in an input directory; an existing separate output file will be overwritten.
-Keep output outside input directories. Use `--` before input paths beginning
-with a hyphen.
-
-On a machine with the CUDA toolkit, configure with
-`cmake -S . -B build -DFUSION_ENABLE_CUDA=ON` to compile the CUDA backend.
-CUDA is disabled by default. CUDA tests require an accessible GPU. CUDA
-compilation disables fused multiply-add to better match the CPU reference's
-floating-point evaluation. If `nvcc` is not on `PATH` or the default host
-compiler is unsupported by the toolkit, specify `CUDACXX` and a compatible
-`CMAKE_CUDA_HOST_COMPILER` when configuring.
-
-The CUDA weight tests compare every raw and normalized map against the CPU.
-Raw weights use an absolute tolerance of `1e-10` plus `3e-5` relative error;
-normalized weights use `2e-5` absolute error. These preliminary tolerances allow
-for float32 and CPU/GPU math-library differences; they are not final pipeline
-correctness tolerances.
-The CUDA pyramid tests compare every Gaussian weight, Gaussian image, and
-Laplacian image level with the CPU using a `1e-6` absolute tolerance, allowing
-for float32 rounding differences.
-Blending and reconstruction tests use `1e-6` absolute error with identical
-CPU-generated stage inputs, and `2e-5` for the chain of CUDA stages, where
-earlier weight-computation differences also contribute.
-The CUDA fusion integration test uses the same `2e-5` preliminary absolute
-tolerance against CPU fusion and checks agreement with the individual CUDA
-stages to `1e-6`.
-
-### CUDA float correctness results
-
-The following comparisons ran on an NVIDIA GeForce RTX 2080 with driver
-550.67, CUDA toolkit 11.7.99, GCC 11.5, CMake 3.28.3, CUDA architecture 75,
-and an unset `CMAKE_BUILD_TYPE` (no optimization flags). CUDA fused
-multiply-add was disabled. Each test calls the CPU and CUDA `fuse()` methods
-with the default depth and compares every unclipped float RGB component; RMSE
-is over all components. Values below are from one run, not timing results.
-
-| Input | Size | Exposures | Levels | Max absolute error | RMSE |
-|---|---:|---:|---:|---:|---:|
-| Constant gray bracket | 7 x 5 | 3 | 4 | 0 | 0 |
-| Identical corner impulses | 7 x 5 | 2 | 4 | 0 | 0 |
-| Odd-sized pattern | 7 x 5 | 3 | 4 | 5.96e-8 | 1.91e-8 |
-| One column | 1 x 17 | 3 | 5 | 1.49e-7 | 4.38e-8 |
-| One row | 17 x 1 | 3 | 5 | 5.96e-8 | 2.36e-8 |
-| One pixel | 1 x 1 | 3 | 1 | 0 | 0 |
-| Single exposure | 19 x 11 | 1 | 5 | 0 | 0 |
-| Memorial bracket | 484 x 714 | 3 | 5 | 3.58e-7 | 1.74e-8 |
-
-The impulse and single-exposure CUDA results also reproduce their inputs:
-maximum errors were `2.91e-11` and `1.49e-8`, respectively. The Memorial test
-loads `memorial00.png`, `memorial03.png`, and `memorial06.png` from
-[`data/basic-test-3`](data/basic-test-3), with no preprocessing beyond the
-loader's 8-bit-to-float conversion. The inputs are assumed aligned; alignment
-has not been independently verified. See the [Memorial notes](data/memorial/README.md)
-for provenance and usage cautions.
-
-Tests require max absolute error <= `2e-5` and RMSE <= `2e-6`; the single-input
-round-trip checks use `1e-6` for both. The CPU and GPU can differ in float32
-arithmetic and math-library evaluation, and those differences propagate through
-normalization and the pyramids. The limits leave roughly 50x headroom over the
-largest observed max error and RMSE while the max limit remains below 1% of one
-8-bit step (`1/255`). They are regression thresholds, not guarantees for
-other devices or inputs. Reproduce the float comparisons with:
-
-```sh
-ctest --test-dir build -R '^cuda_fusion_validation_' -V
-```
-
-The real-image test is registered when all three bracket files are present.
-The CUDA CLI integration test also loads that bracket and writes a PNG.
-
-### Preliminary CUDA timings
-
-On November 16, 2026, the separate-kernel baseline ran on the RTX 2080
-(8 GiB), driver 550.67, CUDA 11.7.99, GCC 11.5, architecture 75, with
-`CMAKE_BUILD_TYPE` unset and fused multiply-add disabled. The workload was the
-three Memorial images above, 484 x 714 pixels, using five pyramid levels.
-Alignment and usage cautions above also apply to this workload.
-
-The benchmark loaded the PNGs and computed the CPU reference before timing.
-After two warmups of each path, it ran ten trials, alternating an
-event-instrumented fusion call with a normal, uninstrumented `fuse()` call.
-The table gives the median and range across those trials, in milliseconds.
+Results for the default sample input, in milliseconds:
 
 | Measurement | Median | Min | Max |
 |---|---:|---:|---:|
-| Quality weights, CUDA events | 0.111 | 0.109 | 0.115 |
-| Normalization, CUDA events | 0.036 | 0.036 | 0.039 |
-| Image and weight Gaussian pyramids, CUDA events | 1.476 | 1.455 | 1.554 |
-| Laplacian pyramids, CUDA events | 1.189 | 1.177 | 1.222 |
-| Blending, CUDA events | 0.271 | 0.267 | 0.277 |
-| Reconstruction, CUDA events | 0.703 | 0.693 | 0.740 |
-| Full device pipeline, CUDA events | 3.793 | 3.750 | 3.927 |
-| Full uninstrumented `fuse()`, host wall clock | 39.996 | 39.749 | 41.058 |
+| CPU `fuse()` (wall) | 733.402 | 732.561 | 733.939 |
+| CUDA quality weights (events) | 0.111 | 0.108 | 0.115 |
+| CUDA normalization (events) | 0.036 | 0.035 | 0.037 |
+| CUDA Gaussian pyramids (events) | 1.462 | 1.455 | 1.469 |
+| CUDA Laplacian pyramids (events) | 1.183 | 1.177 | 1.200 |
+| CUDA blend (events) | 0.268 | 0.267 | 0.271 |
+| CUDA reconstruction (events) | 0.701 | 0.696 | 0.706 |
+| CUDA pipeline (events) | 3.764 | 3.745 | 3.775 |
+| CUDA `fuse()` including transfers (wall) | 38.867 | 38.810 | 39.020 |
 
-Events bracket the pipeline after the input upload and before the output
-download. Stage intervals can include device work for small error-flag
-transfers and GPU idle gaps while the host synchronizes, allocates memory, or
-submits more work; they are **not** pure kernel execution times. The wall-clock
-interval includes
-input validation, device allocations, host-to-device and device-to-host image
-transfers, synchronization, and cleanup, but excludes PNG I/O and backend
-construction. Independent stage medians need not sum to the pipeline median.
-The last profiled and uninstrumented outputs each matched the CPU with max
-error `3.58e-7` and RMSE `1.74e-8`. These are preliminary measurements on a
-shared desktop GPU, not speedup claims.
-
-With a CUDA-enabled build, reproduce them with:
-
-```sh
-./build/cuda_benchmark data/basic-test-3/memorial00.png \
-  data/basic-test-3/memorial03.png data/basic-test-3/memorial06.png
-```
+CUDA output versus CPU: maximum absolute error `3.58e-7`, RMSE `1.74e-8`.
+CPU and CUDA `fuse()` times exclude image I/O. CUDA event timings can include
+GPU idle time and are not pure kernel times.
 
 ## Project Website
 

@@ -1,9 +1,8 @@
 #include "fusion/backend.hpp"
 #include "fusion/image_io.hpp"
+#include "input_paths.hpp"
 
-#include <algorithm>
 #include <charconv>
-#include <cctype>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -87,37 +86,6 @@ Arguments parse_arguments(int argc, char* argv[]) {
     return args;
 }
 
-bool is_metadata_file(const std::filesystem::path& path) {
-    auto ext = path.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return ext == ".md" || ext == ".txt" || ext == ".json" || ext == ".csv" ||
-           path.filename() == ".DS_Store";
-}
-
-std::vector<std::string> expand_inputs(const std::vector<std::string>& paths) {
-    std::vector<std::string> inputs;
-    for (const auto& path : paths) {
-        if (!std::filesystem::is_directory(path)) {
-            inputs.push_back(path);
-            continue;
-        }
-        std::vector<std::string> directory_inputs;
-        for (const auto& entry : std::filesystem::directory_iterator(path)) {
-            if (entry.is_regular_file() && !is_metadata_file(entry.path())) {
-                directory_inputs.push_back(entry.path().string());
-            }
-        }
-        if (directory_inputs.empty()) {
-            throw std::invalid_argument("Input directory contains no image files: " + path);
-        }
-        std::sort(directory_inputs.begin(), directory_inputs.end());
-        inputs.insert(inputs.end(), directory_inputs.begin(), directory_inputs.end());
-    }
-    return inputs;
-}
-
 void check_output_path(const Arguments& args) {
     const auto output = std::filesystem::absolute(args.output).lexically_normal();
     const bool output_exists = std::filesystem::exists(output);
@@ -140,7 +108,7 @@ int main(int argc, char* argv[]) {
 
     try {
         auto args = parse_arguments(argc, argv);
-        args.inputs = expand_inputs(args.inputs);
+        args.inputs = fusion::detail::expand_inputs(args.inputs);
         check_output_path(args);
         auto backend = args.backend == Arguments::Backend::cuda
             ? fusion::make_cuda_backend() : fusion::make_cpu_backend();

@@ -1,0 +1,38 @@
+string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef suffix)
+set(input_dir "${CMAKE_CURRENT_BINARY_DIR}/benchmark-${suffix}-inputs")
+set(empty_dir "${CMAKE_CURRENT_BINARY_DIR}/benchmark-${suffix}-empty")
+if(EXISTS "${input_dir}" OR EXISTS "${empty_dir}")
+    message(FATAL_ERROR "Test directory already exists")
+endif()
+file(MAKE_DIRECTORY "${input_dir}/nested" "${empty_dir}")
+file(WRITE "${input_dir}/a.ppm" "P6\n1 1\n255\nABC")
+file(WRITE "${input_dir}/z.ppm" "P6\n1 1\n255\nDEF")
+file(WRITE "${input_dir}/notes.MD" "metadata")
+file(WRITE "${input_dir}/nested/ignored.ppm" "P6\n1 1\n255\nGHI")
+file(WRITE "${empty_dir}/notes.txt" "metadata")
+
+function(expect_success expected)
+    execute_process(COMMAND "${EXE}" ${ARGN}
+        RESULT_VARIABLE status OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr)
+    if(NOT status STREQUAL "0" OR NOT stdout MATCHES "${expected}" OR
+       NOT stdout MATCHES "median=.*ms.*min=.*ms.*max=.*ms")
+        message(FATAL_ERROR "Unexpected benchmark result (${status}): ${ARGN}\n${stdout}\n${stderr}")
+    endif()
+endfunction()
+
+function(expect_error expected)
+    execute_process(COMMAND "${EXE}" ${ARGN}
+        RESULT_VARIABLE status OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr)
+    if(status STREQUAL "0" OR NOT stderr MATCHES "${expected}")
+        message(FATAL_ERROR "Expected error '${expected}' (${status}): ${ARGN}\n${stdout}\n${stderr}")
+    endif()
+endfunction()
+
+expect_success("1x1, 2 exposures" "${input_dir}")
+expect_success("1x1, 2 exposures" "${input_dir}/a.ppm" "${input_dir}/z.ppm")
+expect_success("1x1, 3 exposures" "${input_dir}/a.ppm" "${input_dir}")
+expect_error("Input directory contains no image files" "${empty_dir}")
+file(WRITE "${input_dir}/unsupported.jpg" "not an image")
+expect_error("Unsupported image format" "${input_dir}")
+
+file(REMOVE_RECURSE "${input_dir}" "${empty_dir}")
