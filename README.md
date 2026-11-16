@@ -104,6 +104,49 @@ The CUDA fusion integration test uses the same `2e-5` preliminary absolute
 tolerance against CPU fusion and checks agreement with the individual CUDA
 stages to `1e-6`.
 
+### CUDA float correctness results
+
+The following comparisons ran on an NVIDIA GeForce RTX 2080 with driver
+550.67, CUDA toolkit 11.7.99, GCC 11.5, CMake 3.28.3, CUDA architecture 75,
+and an unset `CMAKE_BUILD_TYPE` (no optimization flags). CUDA fused
+multiply-add was disabled. Each test calls the CPU and CUDA `fuse()` methods
+with the default depth and compares every unclipped float RGB component; RMSE
+is over all components. Values below are from one run, not timing results.
+
+| Input | Size | Exposures | Levels | Max absolute error | RMSE |
+|---|---:|---:|---:|---:|---:|
+| Constant gray bracket | 7 x 5 | 3 | 4 | 0 | 0 |
+| Identical corner impulses | 7 x 5 | 2 | 4 | 0 | 0 |
+| Odd-sized pattern | 7 x 5 | 3 | 4 | 5.96e-8 | 1.91e-8 |
+| One column | 1 x 17 | 3 | 5 | 1.49e-7 | 4.38e-8 |
+| One row | 17 x 1 | 3 | 5 | 5.96e-8 | 2.36e-8 |
+| One pixel | 1 x 1 | 3 | 1 | 0 | 0 |
+| Single exposure | 19 x 11 | 1 | 5 | 0 | 0 |
+| Memorial bracket | 484 x 714 | 3 | 5 | 3.58e-7 | 1.74e-8 |
+
+The impulse and single-exposure CUDA results also reproduce their inputs:
+maximum errors were `2.91e-11` and `1.49e-8`, respectively. The Memorial test
+loads `memorial00.png`, `memorial03.png`, and `memorial06.png` from
+[`data/basic-test-3`](data/basic-test-3), with no preprocessing beyond the
+loader's 8-bit-to-float conversion. The inputs are assumed aligned; alignment
+has not been independently verified. See the [Memorial notes](data/memorial/README.md)
+for provenance and usage cautions.
+
+Tests require max absolute error <= `2e-5` and RMSE <= `2e-6`; the single-input
+round-trip checks use `1e-6` for both. The CPU and GPU can differ in float32
+arithmetic and math-library evaluation, and those differences propagate through
+normalization and the pyramids. The limits leave roughly 50x headroom over the
+largest observed max error and RMSE while the max limit remains below 1% of one
+8-bit step (`1/255`). They are regression thresholds, not guarantees for
+other devices or inputs. Reproduce the float comparisons with:
+
+```sh
+ctest --test-dir build -R '^cuda_fusion_validation_' -V
+```
+
+The real-image test is registered when all three bracket files are present.
+The CUDA CLI integration test also loads that bracket and writes a PNG.
+
 ## Project Website
 
 Edit [proposal.md](proposal.md), then regenerate [index.html](index.html):

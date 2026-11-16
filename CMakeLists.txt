@@ -44,6 +44,7 @@ if(BUILD_TESTING)
     add_test(NAME cli_integration
         COMMAND ${CMAKE_COMMAND} "-DEXE=$<TARGET_FILE:exposure_fusion>"
                 "-DCUDA_ENABLED=${FUSION_ENABLE_CUDA}"
+                "-DBRACKET_DIR=${CMAKE_CURRENT_SOURCE_DIR}/data/basic-test-3"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.cmake")
 
     add_executable(cpu_weights_tests tests/cpu_weights_tests.cpp)
@@ -67,6 +68,21 @@ if(BUILD_TESTING)
         add_executable(cuda_fusion_tests tests/cuda_fusion_tests.cpp)
         target_link_libraries(cuda_fusion_tests PRIVATE fusion_core)
         add_test(NAME cuda_fusion COMMAND cuda_fusion_tests)
+        add_executable(cuda_fusion_validation_tests tests/cuda_fusion_validation_tests.cpp)
+        target_link_libraries(cuda_fusion_validation_tests PRIVATE fusion_core)
+        add_test(NAME cuda_fusion_validation_synthetic COMMAND cuda_fusion_validation_tests)
+        set(validation_images
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/basic-test-3/memorial00.png"
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/basic-test-3/memorial03.png"
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/basic-test-3/memorial06.png")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/basic-test-3/memorial00.png" AND
+           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/basic-test-3/memorial03.png" AND
+           EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/basic-test-3/memorial06.png")
+            add_test(NAME cuda_fusion_validation_real
+                COMMAND cuda_fusion_validation_tests --real ${validation_images})
+        else()
+            message(STATUS "CUDA real-image validation not registered: memorial bracket is incomplete")
+        endif()
     endif()
 
     add_executable(cpu_weight_pyramid_tests tests/cpu_weight_pyramid_tests.cpp)
