@@ -1,6 +1,7 @@
-"""Build index.html from proposal.md with Python's standard library."""
+"""Build the milestone project page and archived proposal using the standard library."""
 import html
 import re
+import posixpath
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,7 +9,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def inline(text):
     text = html.escape(text)
-    text = re.sub(r'\[([^\]]+)\]\((https?://[^\s)]+)\)', r'<a href="\2">\1</a>', text)
+    def link(match):
+        url = match[2]
+        if not url.startswith(('https://', 'http://', '#')):
+            if ':' in url:
+                return match[1]
+            url = posixpath.normpath('docs/' + url)
+        return '<a href="' + url + '">' + match[1] + '</a>'
+    text = re.sub(r'\[([^\]]+)\]\(([^\s)]+)\)', link, text)
     return re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
 
 
@@ -57,7 +65,12 @@ def render(text):
         if table and not line.startswith('|'):
             output.append('</tbody></table></div>')
             table = False
-        if heading:
+        figure = re.fullmatch(r'!\[(.*?)\]\((.*?)\)', line)
+        if figure:
+            flush()
+            path = posixpath.normpath('docs/' + figure[2])
+            output.append('<figure><img style="width:100%;height:auto" src="' + html.escape(path, quote=True) + '" alt="' + html.escape(figure[1], quote=True) + '"><figcaption>' + inline(figure[1]) + '</figcaption></figure>')
+        elif heading:
             flush()
             level = len(heading[1])
             output.append(f'<h{level}>' + inline(heading[2]) + f'</h{level}>')
@@ -89,28 +102,44 @@ def render(text):
     return '\n'.join(output)
 
 
-source = (ROOT / 'proposal.md').read_text()
-title = source.splitlines()[0].removeprefix('# ')
-parts = re.split(r'^## (.+)\s*$', source, flags=re.MULTILINE)
-project_url = re.search(r'(?m)^\*\*Project URL\*\*[ \t]*\n(?:[ \t]*\n)*[^\n]+', parts[0])
-project_url_html = render(project_url[0]) if project_url else ''
-navigation, sections = [], []
-for i in range(1, len(parts), 2):
-    heading = parts[i].strip().rstrip(':').strip()
-    anchor = re.sub(r'[^a-z0-9]+', '-', heading.lower()).strip('-')
-    navigation.append(f'<a href="#{anchor}">{html.escape(heading)}</a>')
-    sections.append(f'<section id="{anchor}"><span class="number">{(i+1)//2:02}</span><div><h2>{html.escape(heading)}</h2>{render(parts[i+1])}</div></section>')
+def build(source_path, output_path, label):
+    source = (ROOT / source_path).read_text()
+    title = source.splitlines()[0].removeprefix('# ')
+    parts = re.split(r'^## (.+)\s*$', source, flags=re.MULTILINE)
+    intro = '\n'.join(parts[0].splitlines()[1:])
+    navigation, sections = [], []
+    for i in range(1, len(parts), 2):
+        heading = parts[i].strip().rstrip(':').strip()
+        anchor = re.sub(r'[^a-z0-9]+', '-', heading.lower()).strip('-')
+        navigation.append(f'<a href="#{anchor}">{html.escape(heading)}</a>')
+        sections.append(f'<section id="{anchor}"><span class="number">{(i+1)//2:02}</span><div><h2>{html.escape(heading)}</h2>{render(parts[i+1])}</div></section>')
+    is_proposal = source_path == 'docs/proposal.md'
+    document_id = 'proposal' if is_proposal else 'milestone'
+    tabs = []
+    for href, name, active in [('index.html', 'Proposal', is_proposal),
+                               ('milestone.html', 'Milestone Report', not is_proposal)]:
+        text = '<strong>' + name + '</strong>' if active else name
+        current = ' aria-current="page"' if active else ''
+        tabs.append('<a href="' + href + '"' + current + '>' + text + '</a>')
+    tabs_html = '<header aria-label="Project documents"><div>' + ' &nbsp; / &nbsp; '.join(tabs) + '</div></header>'
+    project_url = re.search(r'(?m)^\*\*Project URL\*\*[ \t]*\n(?:[ \t]*\n)*[^\n]+', intro)
+    url_html = render(project_url[0]) if project_url else '<p><strong>Project URL</strong></p><p><a href="https://Lijunhaohz.github.io/15618-project/">https://Lijunhaohz.github.io/15618-project/</a></p>'
+    team_html = '<div class="team"><div><span>TEAM</span>Estella Xie <small>ziyoux</small><br>Junhao Li <small>junhaoli</small></div><div class="project-url">' + url_html + '</div></div>'
+    report_intro = '' if is_proposal else render('\n'.join(line for line in intro.splitlines() if not line.startswith('**Estella Xie')))
+    pdf_path = 'docs/proposal.pdf' if is_proposal else 'docs/milestone.pdf'
+    page = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+    page += '<meta name="description" content="15-618 exposure fusion project: implementation progress, measured results, and revised schedule.">'
+    page += '<title>' + html.escape(title + ' — ' + label) + '</title><link rel="stylesheet" href="assets/style.css"></head>'
+    page += '<body><a class="skip" href="#' + document_id + '">Skip to ' + label.lower() + '</a>' + tabs_html
+    page += '<main><div class="hero"><h1>' + html.escape(title) + '</h1>' + team_html + report_intro
+    page += '</div><div class="document" id="' + document_id + '"><aside><div class="eyebrow">' + html.escape('IN THIS ' + label.upper()) + '</div><nav aria-label="' + html.escape(label, quote=True) + ' sections">'
+    page += ''.join(navigation) + '</nav><a href="' + pdf_path + '">Download PDF ↗</a><br><a href="' + source_path + '">Markdown source ↗</a></aside><article>'
+    page += '\n'.join(sections) + '</article></div></main><footer>Estella Xie &amp; Junhao Li · 15-618 · CUDA-Accelerated Multi-Exposure Image Fusion</footer></body></html>'
+    (ROOT / output_path).write_text(page)
+    print('Built ' + output_path + ' from ' + source_path)
 
-page = '''<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="A 15-618 project proposal exploring CUDA optimizations for multi-scale exposure fusion, by Estella Xie and Junhao Li.">
-<title>''' + html.escape(title) + '''</title><link rel="stylesheet" href="assets/style.css"></head>
-<body><a class="skip" href="#proposal">Skip to proposal</a>
-<main><div class="hero">
-<h1>''' + html.escape(title) + '''</h1>
-<div class="team"><div><span>TEAM</span>Estella Xie <small>ziyoux</small><br>Junhao Li <small>junhaoli</small></div><div class="project-url">''' + project_url_html + '''</div></div></div>
-<div class="document" id="proposal"><aside><div class="eyebrow">IN THIS PROPOSAL</div><nav aria-label="Proposal sections">''' + ''.join(navigation) + '''</nav><a href="proposal.md">Markdown source ↗</a></aside><article>''' + '\n'.join(sections) + '''</article></div></main>
-<footer>Estella Xie &amp; Junhao Li · 15-618 · CUDA-Accelerated Multi-Exposure Image Fusion</footer></body></html>
-'''
-(ROOT / 'index.html').write_text(page)
-print('Built index.html from proposal.md')
+
+if __name__ == '__main__':
+    build('docs/proposal.md', 'index.html', 'Proposal')
+    build('docs/proposal.md', 'proposal.html', 'Proposal')
+    build('docs/milestone.md', 'milestone.html', 'Milestone Report')

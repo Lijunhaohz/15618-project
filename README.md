@@ -67,6 +67,21 @@ requires the three supplied Memorial images; their alignment is assumed, not
 independently verified. See the [Memorial notes](data/memorial/README.md) for
 provenance and usage cautions.
 
+### Milestone experiment sweeps and GPU profiling
+
+See [experiment instructions](docs/experiments.md) for CPU/CUDA sweeps across
+pyramid depth, exposure count, and scene directories, CSV output, saved images,
+device allocation accounting, Linux perf counters/call stacks, and full Nsight
+Systems/Compute profiles. Start with:
+
+```sh
+python3 scripts/run_experiments.py --save-images
+```
+
+Generate graphs from a completed run with `scripts/plot_results.py`; see the
+[plotting setup and interpretation guide](docs/experiments.md#make-graphs-and-interpret-a-run).
+The default output is one PDF and one Markdown interpretation.
+
 ### Preliminary results
 
 Results for the default sample input, in milliseconds:
@@ -87,35 +102,39 @@ CUDA output versus CPU: maximum absolute error `3.58e-7`, RMSE `1.74e-8`.
 CPU and CUDA `fuse()` times exclude image I/O. CUDA event timings can include
 GPU idle time and are not pure kernel times.
 
-## Project Website
+## Milestone report and project website
 
-Edit [proposal.md](proposal.md), then regenerate [index.html](index.html):
+The milestone report is [docs/milestone.md](docs/milestone.md), with the full
+submission PDF at [docs/milestone.pdf](docs/milestone.pdf). The project homepage
+shows the milestone and revised schedule; [proposal.html](proposal.html)
+preserves the original proposal.
+
+After editing the report, rebuild the site:
 
 ```sh
 python3 scripts/build_site.py
 python3 -m http.server 8000
 ```
 
-Open http://localhost:8000. Stop the server with Ctrl+C. No packages are required. Rebuild after every proposal edit and commit the generated HTML along with the Markdown. Styles live in `assets/style.css`.
+Open http://localhost:8000. The script reads `docs/milestone.md` and
+`docs/proposal.md`; generated pages and report figures should be committed with
+the source documents. Publishing requires deploying the repository through
+GitHub Pages. The expected project URL is
+https://Lijunhaohz.github.io/15618-project/; local generation does not publish it.
 
-The built-in Markdown renderer supports section headings (`##`), subheadings (`###` through `######`), horizontal rules, blockquotes, lists, tables, bold text, and HTTP(S) links. It is not a full Markdown implementation.
-
-### Put the changes on GitHub
+To rebuild the PDF, install `scripts/requirements-report.txt` in the plotting
+virtual environment, then run:
 
 ```sh
-git status
-git add proposal.md index.html assets/style.css scripts/build_site.py README.md .nojekyll
-git commit -m "Add revised proposal and project website"
-git push
+.venv-plot/bin/python -m pip install -r scripts/requirements-report.txt
+.venv-plot/bin/python scripts/build_milestone_pdf.py
 ```
 
-### Publish the website
-
-In the GitHub repository, go to **Settings → Pages**. Choose **Deploy from a branch**, select the branch you pushed and **/ (root)**, then save. Wait for GitHub's Pages deployment to finish.
-
-Expected URL after publishing: https://lijunhaohz.github.io/15618-project/
-
-The proposal uses this expected address; it is not verified live. If publishing under another owner or repository, update the proposal URL and the repository link in `scripts/build_site.py`, then rebuild.
+The two curated figures are already included in `docs/imgs`. To regenerate them
+from the measured run, append
+`--results output/ziyoux-fusion-results-20261117-141823`.
+Publishing the project page and uploading the full PDF to Gradescope are
+separate submission steps.
 
 ## References
 Mertens, T., Kautz, J., & Van Reeth, F. (2007). **Exposure Fusion**. In *Pacific Graphics 2007* (pp. 382–390). IEEE. https://doi.org/10.1109/PG.2007.17

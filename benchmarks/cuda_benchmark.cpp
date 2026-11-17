@@ -41,31 +41,39 @@ void verify(const fusion::RgbImage& actual, const fusion::RgbImage& expected,
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: cuda_benchmark INPUT [INPUT ...] (image files or directories)\n";
+        std::cerr << "Usage: cuda_benchmark [--levels N] [--warmups N] [--trials N] [--] INPUT...\n";
         return 1;
     }
     try {
         std::vector<fusion::RgbImage> images;
-        const std::vector<std::string> paths(argv + 1, argv + argc);
-        const auto inputs = fusion::detail::expand_inputs(paths);
+        const auto args = benchmark::parse_arguments(argc, argv);
+        const auto inputs = fusion::detail::expand_inputs(args.paths);
         images.reserve(inputs.size());
         for (const auto& input : inputs) images.push_back(fusion::load_image(input));
         auto cpu = fusion::make_cpu_backend();
         auto cuda = fusion::make_cuda_backend();
-        const auto expected = cpu->fuse(images, {});
+        const auto expected = cpu->fuse(images, args.options);
 
-        for (int i = 0; i < benchmark::warmups; ++i) {
+        for (int i = 0; i < args.warmups; ++i) {
             fusion::detail::CudaStageTimings ignored;
-            fusion::detail::profile_cuda_fuse(images, {}, ignored);
-            cuda->fuse(images, {});
+            fusion::detail::profile_cuda_fuse(images, args.options, ignored);
+            cuda->fuse(images, args.options);
         }
 
         std::vector<double> quality, normalization, gaussian, laplacian, blend, reconstruction;
         std::vector<double> pipeline, wall;
         fusion::RgbImage profiled, ordinary;
-        for (int i = 0; i < benchmark::iterations; ++i) {
+        for (int i = 0; i < args.iterations; ++i) {
             fusion::detail::CudaStageTimings timings;
-            profiled = fusion::detail::profile_cuda_fuse(images, {}, timings);
+            profiled = fusion::detail::profile_cuda_fuse(images, args.options, timings);
+            std::cout << "Device memory: trial=" << i
+                      << " peak_bytes=" << timings.peak_device_bytes
+                      << " allocated_bytes=" << timings.total_allocated_bytes
+                      << " allocations=" << timings.allocation_count
+                      << " live_bytes=" << timings.live_device_bytes << '\n';
+            if (timings.peak_device_bytes == 0 || timings.allocation_count == 0)
+                throw std::runtime_error("Device allocation accounting is missing");
+            if (timings.live_device_bytes != 0) throw std::runtime_error("Device allocation accounting did not return to zero");
             quality.push_back(timings.quality_ms);
             normalization.push_back(timings.normalization_ms);
             gaussian.push_back(timings.gaussian_ms);
@@ -75,7 +83,7 @@ int main(int argc, char* argv[]) {
             pipeline.push_back(timings.pipeline_ms);
 
             const auto start = std::chrono::steady_clock::now();
-            auto result = cuda->fuse(images, {});
+            auto result = cuda->fuse(images, args.options);
             const auto end = std::chrono::steady_clock::now();
             wall.push_back(std::chrono::duration<double, std::milli>(end - start).count());
             ordinary = std::move(result);
@@ -83,8 +91,8 @@ int main(int argc, char* argv[]) {
 
         std::cout << images.front().width << 'x' << images.front().height << ", "
                   << images.size() << " exposures, "
-                  << benchmark::levels_for(images.front().width, images.front().height)
-                  << " levels; " << benchmark::warmups << " warmups, " << benchmark::iterations << " trials\n";
+                  << args.options.levels.value_or(benchmark::levels_for(images.front().width, images.front().height))
+                  << " levels; " << args.warmups << " warmups, " << args.iterations << " trials\n";
         verify(profiled, expected, 2e-5, "Profiled CUDA vs CPU");
         verify(ordinary, expected, 2e-5, "Uninstrumented CUDA vs CPU");
         verify(profiled, ordinary, 1e-6, "Profiled vs uninstrumented CUDA");

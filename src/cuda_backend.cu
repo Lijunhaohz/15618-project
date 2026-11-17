@@ -94,15 +94,39 @@ private:
     std::vector<std::unique_ptr<CudaEvent>> events_;
 };
 
+// Thread-local scope keeps allocation accounting out of ordinary timed calls.
+thread_local detail::CudaStageTimings* allocation_stats = nullptr;
+
+class AllocationScope {
+public:
+    explicit AllocationScope(detail::CudaStageTimings* stats) : previous_(allocation_stats) {
+        allocation_stats = stats;
+        if (stats) {
+            stats->live_device_bytes = stats->peak_device_bytes = 0;
+            stats->total_allocated_bytes = stats->allocation_count = 0;
+        }
+    }
+    ~AllocationScope() { allocation_stats = previous_; }
+private:
+    detail::CudaStageTimings* previous_;
+};
+
 template <typename T>
 class DeviceBuffer {
 public:
-    explicit DeviceBuffer(std::size_t count) : data_(nullptr) {
+    explicit DeviceBuffer(std::size_t count) : data_(nullptr), bytes_(0), stats_(allocation_stats) {
         if (count > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
             throw std::overflow_error("CUDA allocation size overflow");
         }
         check_cuda(cudaMalloc(reinterpret_cast<void**>(&data_), count * sizeof(T)),
                    "cudaMalloc");
+        bytes_ = count * sizeof(T);
+        if (stats_) {
+            stats_->live_device_bytes += bytes_;
+            stats_->peak_device_bytes = std::max(stats_->peak_device_bytes, stats_->live_device_bytes);
+            stats_->total_allocated_bytes += bytes_;
+            ++stats_->allocation_count;
+        }
     }
 
     DeviceBuffer(const DeviceBuffer&) = delete;
@@ -112,6 +136,7 @@ public:
     ~DeviceBuffer() {
         if (data_) {
             const auto status = cudaFree(data_);
+            if (status == cudaSuccess && stats_) stats_->live_device_bytes -= bytes_;
             if (status != cudaSuccess) {
                 std::fprintf(stderr, "cudaFree during cleanup: %s\n", cudaGetErrorString(status));
             }
@@ -121,13 +146,16 @@ public:
     T* get() const { return data_; }
 
     void release() {
-        T* data = data_;
+        if (!data_) return;
+        check_cuda(cudaFree(data_), "cudaFree");
+        if (stats_) stats_->live_device_bytes -= bytes_;
         data_ = nullptr;
-        check_cuda(cudaFree(data), "cudaFree");
     }
 
 private:
     T* data_;
+    std::size_t bytes_;
+    detail::CudaStageTimings* stats_;
 };
 
 std::size_t checked_product(std::size_t a, std::size_t b) {
@@ -806,6 +834,7 @@ public:
 private:
     RgbImage fuse_impl(const std::vector<RgbImage>& images, const FusionOptions& options,
                        detail::CudaStageTimings* timings) {
+        AllocationScope allocation_scope(timings);
         validate_images(images);
         const auto width = images.front().width;
         const auto height = images.front().height;

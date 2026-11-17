@@ -23,7 +23,10 @@ target_link_libraries(fusion_core PRIVATE PNG::PNG)
 
 if(FUSION_ENABLE_CUDA)
     target_sources(fusion_core PRIVATE src/cuda_backend.cu)
-    target_compile_options(fusion_core PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
+    target_compile_options(fusion_core PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>
+        $<$<COMPILE_LANGUAGE:CUDA>:--generate-line-info>
+    )
     set_target_properties(fusion_core PROPERTIES
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED YES
@@ -47,6 +50,11 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME experiment_driver
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/experiment_driver_tests.py")
+    endif()
     add_executable(skeleton_tests tests/skeleton_tests.cpp)
     target_link_libraries(skeleton_tests PRIVATE fusion_core)
     if(FUSION_ENABLE_CUDA)
