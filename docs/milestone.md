@@ -6,27 +6,43 @@
 
 ## Implementation and design
 
-We have completed a serial CPU reference and a working CUDA baseline for Mertens exposure fusion. Both compute contrast, saturation, and well-exposedness weights, normalize them across exposures, build Gaussian weight pyramids and Laplacian image pyramids, blend the levels, and reconstruct one output image. They share the same floating-point, sampling, and reflected-boundary rules. The command-line application accepts aligned RGB PNG/PPM inputs, supports different pyramid depths, and saves the fused image.
+We have completed a serial CPU reference and a separate-kernel working CUDA baseline for Mertens exposure fusion. Both compute contrast, saturation, and well-exposedness weights, normalize them across exposures, build Gaussian weight pyramids and Laplacian image pyramids, blend the levels, and reconstruct one output image. They share the same floating-point, sampling, and reflected-boundary rules. The command-line application accepts aligned RGB PNG/PPM inputs, supports different pyramid depths, and saves the fused image. See the [algorithm specification](../algorithm.html) for the numerical conventions and pipeline details.
 
-The CUDA baseline keeps all input pyramids in GPU memory and launches separate kernels for most operations. Reduction already combines filtering with downsampling. Shared-memory tiling, systematic buffer reuse, and incremental processing remain to be implemented and evaluated. We have added stage timing, device-buffer allocation tracking, CPU/GPU comparisons, and profiling scripts. All 25 tests passed on the GPU machine, including intermediate-stage comparisons, synthetic edge cases, and real-image validation.
+The CUDA baseline keeps all input pyramids in GPU memory and launches separate kernels for most operations. The baseline only involves straightforward kernel launches without optimizations such as shared-memory tiling or buffer reuse (these will be explored in future work). To evaluate and profile performance, we added stage timing, device-buffer allocation tracking, CPU/GPU comparisons, and profiling scripts. All correctness checks passed on the GPU machine. And we have conducted a series of preliminary experiments to measure runtime, speedup, and memory usage. The preliminary results are reported below.
 
 ## Preliminary results
 
-Experiments used an Intel Core i7-9700 and NVIDIA RTX 2080 on ghc40, CUDA 11.7, and a Release build. We tested the Memorial scene at 484 by 714 pixels, with 1/3/5/9 exposures and 1–5 pyramid levels: 20 cases, each with two warmups and ten measured trials.
+### Sample output and correctness analysis
+The following figure shows the three supplied Memorial exposures alongside the saved sample output. The output shows visible detail in both the bright window and darker architectural regions.
 
-The table reports median fusion-call wall time. Image loading/saving is excluded; CUDA wall time includes transfers and allocation/cleanup.
+![Figure 1. Three sample exposures alongside the saved fused output.](imgs/milestone-sample.png)
 
-| Exposures, five levels | CPU (ms) | CUDA (ms) | Speedup |
+We compared the CUDA output against the CPU reference for all test cases, including different numbers of exposures and pyramid levels. The largest CUDA-versus-CPU maximum absolute error was **3.58e-7**; the largest RMSE was **2.34e-8**, below our test limits of 2e-5 and 2e-6. This supports numerical correctness; visual quality will be evaluated separately.
+
+### Overall runtime analysis
+Experiments used an Intel Core i7-9700 and NVIDIA RTX 2080 on GHC40, CUDA 11.7, and a Release build. We used the [OpenCV HDR exposure test images](https://github.com/opencv/opencv_extra/tree/4.x/testdata/cv/hdr/exposures) as input, which include sequences of aligned multi-exposure images of the Memorial scene. 
+
+We tested the Memorial scene at 484 by 714 pixels, with **1/3/5/9 exposures (number of input images)** and **1–5 pyramid levels**. There are 20 cases in total, each with two warmups and ten measured trials. The table reports median fusion-call wall time. Image loading/saving is excluded, but CUDA wall time includes transfers and allocation/cleanup.
+
+| Exposures, 5 levels | CPU (ms) | CUDA (ms) | Speedup |
 |---|---:|---:|---:|
 | 3 | 89.387 | 10.882 | 8.21x |
 | 5 | 140.025 | 16.600 | 8.44x |
 | 9 | 244.236 | 26.298 | 9.29x |
 
-CUDA is about eight to nine times faster in these cases. More exposures generally increase runtime. For three exposures, increasing depth from two to five raises CUDA time from 9.106 to 10.882 ms: later levels add less work because their images are smaller.
+Based on the results, CUDA is about 8x-9x faster in these cases. As expected, more exposures generally increase runtime, and the advantage of CUDA becomes more pronounced with higher exposure counts (as speedup grows from 8.21x for 3 exposures to 9.29x for 9 exposures).
 
-![Figure 1. Median wall time and speedup at five pyramid levels.](imgs/milestone-runtime.png)
+We also examine the effect of pyramid depth on CUDA runtime. For 3 exposures, increasing depth from 2 to 5 raises CUDA time from 9.106 to 10.882 ms: later levels add less work because their images are smaller.
 
-For three exposures and five levels, the CUDA event pipeline took 3.715 ms. Gaussian construction took 1.444 ms and Laplacian construction 1.166 ms, together about 70% of that interval. Weight computation, normalization, blending, and reconstruction took 0.110, 0.036, 0.263, and 0.690 ms, respectively. Pyramid operations are therefore our first kernel-optimization target. Event intervals can include idle time; their difference from wall time is not a direct measurement of transfer cost.
+![Figure 2. Median wall time and speedup at five pyramid levels.](imgs/milestone-runtime.png)
+
+### Stage timing and memory analysis
+
+Apart from overall runtime, we also analyze the timing of individual stages within the CUDA pipeline. This helps identify which parts of the computation dominate execution time and are potential targets for optimization.
+
+For 3 exposures and 5 levels, the CUDA event pipeline took 3.715 ms. Gaussian construction took 1.444 ms and Laplacian construction 1.166 ms, together about 70% of that interval. Weight computation, normalization, blending, and reconstruction took 0.110, 0.036, 0.263, and 0.690 ms, respectively. **Pyramid operations are therefore our first kernel-optimization target.** 
+
+Memory use and allocation count grow with exposure count, motivating buffer reuse and incremental execution. These measurements exclude CUDA driver/context memory. Tracked live bytes returned to zero after every instrumented trial.
 
 | Exposures, five levels | Peak requested GPU buffers (MiB) | Allocations per call |
 |---|---:|---:|
@@ -34,11 +50,7 @@ For three exposures and five levels, the CUDA event pipeline took 3.715 ms. Gaus
 | 5 | 84.22 | 98 |
 | 9 | 138.68 | 146 |
 
-Memory use and allocation count grow with exposure count, motivating buffer reuse and incremental execution. These measurements exclude CUDA driver/context memory. Tracked live bytes returned to zero after every instrumented trial.
-
-![Figure 2. CUDA stage intervals for three exposures and peak buffer memory at five levels.](imgs/milestone-stages-memory.png)
-
-The largest CUDA-versus-CPU maximum absolute error was 3.58e-7; the largest RMSE was 2.34e-8, below our test limits of 2e-5 and 2e-6. This supports numerical correctness; visual quality will be evaluated separately.
+![Figure 3. CUDA stage intervals for three exposures and peak buffer memory at five levels.](imgs/milestone-stages-memory.png)
 
 Profiling also identifies overhead outside the kernels. The three-exposure, five-level CLI run made 74 allocations and 104 device synchronizations. The current implementation synchronizes after each kernel to check execution errors. We will test buffer reuse and fewer explicit waits alongside filtering improvements. Profiled allocation time includes CUDA startup, so it does not establish the allocation share of steady-state runtime.
 
