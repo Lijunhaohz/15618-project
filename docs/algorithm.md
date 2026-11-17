@@ -1,8 +1,6 @@
-# Algorithm and I/O specification
+# Algorithm Specification
 
-## The image fusion algorithm
-
-### Input and numerical conventions
+## Input and numerical conventions
 
 - Accept one or more pre-aligned, same-size RGB images of a static scene; a
   typical bracket has multiple exposures. Alignment and ghost removal are out
@@ -18,7 +16,7 @@
   zero; stop earlier when both dimensions reach one. Allow a smaller explicit
   level count and reject counts below one or beyond that limit.
 
-### Weight computation
+## Weight computation
 
 For exposure $i$ and pixel $p = (x, y)$, let $R_i(p)$, $G_i(p)$, and
 $B_i(p)$ be the RGB values. Compute three measures, each with exponent 1:
@@ -65,13 +63,13 @@ $$
 Adding epsilon before normalization gives equal weights when every exposure
 has zero contrast or saturation.
 
-### Building pyramids
+## Building pyramids
 
 In this section, we describe how to build pyramids for images and weight maps, which are used for multi-scale blending.
 - For each normalized weight map, we build a Gaussian pyramid using the same reduce operation.
 - For each RGB image, we build a Laplacian pyramid by first constructing a Gaussian pyramid and then taking differences between levels.
 
-![](imgs/laplacian.png)
+![Construction of a Laplacian pyramid.](imgs/laplacian.png)
 
 We use the separable five-tap **Gaussian kernel** in each dimension:
 
@@ -128,9 +126,9 @@ G^I_{i,K-1}, & \ell = K-1.
 \end{cases}
 $$
 
-### Blending and reconstruction
+## Blending and reconstruction
 
-![](imgs/blending.png)
+![Multi-scale blending and reconstruction.](imgs/blending.png)
 
 Blend each level, applying the scalar weight to every RGB channel, then
 reconstruct from coarse to fine:
@@ -146,7 +144,7 @@ $$
 
 The final fused image is $F_0$.
 
-### Correctness checks
+## Correctness checks
 
 Compare CPU and CUDA weights, pyramid levels, blended levels, and final
 floating-point outputs using maximum absolute error and RMSE. Record tolerances
@@ -155,64 +153,4 @@ normalized weights sum to approximately one, that a single-exposure result
 reconstructs its input, and that constant, impulse, and odd-sized inputs
 behave consistently. Visual inspection complements these checks but does not
 replace them.
-
-## Suggested input sources
-
-### Aligned exposure brackets
-
-- **Small starting set:** Browse the
-  [OpenCV HDR exposure test images](https://github.com/opencv/opencv_extra/tree/4.x/testdata/cv/hdr/exposures)
-  and download several `memorialNN.png` files from the same sequence. Use
-  GitHub's download controls or the raw file links. Check their dimensions and
-  visually inspect registration before using them; record the source and
-  selected filenames.
-- **Broader evaluation:** The [SICE dataset](https://github.com/csjcai/SICE#dataset)
-  provides downloads for multi-exposure sequences. Follow the dataset page's
-  Google Drive or Baidu links, select images belonging to the same sequence,
-  and verify alignment and dimensions. Review the dataset's usage terms and
-  citation requirements before distributing images or results.
-- **Own captures:** Use a tripod and exposure bracketing on a static scene.
-  Keep the camera and focus fixed, inspect for movement, and export the
-  exposures at the same dimensions. No image alignment is included in the
-  baseline.
-
-Keep dataset downloads separate from source code, and record the source,
-license or usage terms, resolution, exposure count, and any preprocessing for
-each experiment.
-
-### Synthetic inputs
-
-Synthetic test images are more reproducible when generated locally than
-downloaded. For example, the following standard-library Python command writes
-three odd-sized constant RGB images and two identical images with a corner
-impulse as binary PPM files:
-
-```sh
-python3 - <<'PY'
-from pathlib import Path
-
-out = Path("test-inputs")
-out.mkdir(exist_ok=True)
-width, height = 7, 5
-
-def write_ppm(name, pixels):
-    header = f"P6\n{width} {height}\n255\n".encode("ascii")
-    (out / name).write_bytes(header + bytes(pixels))
-
-for value in (64, 128, 192):
-    write_ppm(f"constant-{value}.ppm", [value, value, value] * width * height)
-
-impulse = [0] * (width * height * 3)
-impulse[:3] = [255, 255, 255]
-for index in (0, 1):
-    write_ppm(f"impulse-{index}.ppm", impulse)
-PY
-```
-
-Use the constant images as one bracket and the impulse images as another.
-The constant bracket exercises zero-measure normalization; identical impulse
-images exercise boundary handling and reconstruction. The baseline image
-loader must support PPM for these files, or they can be converted losslessly
-to a supported RGB format. Also test a single image, one-pixel dimensions,
-and mismatched sizes.
 

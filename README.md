@@ -109,7 +109,7 @@ submission PDF at [docs/milestone.pdf](docs/milestone.pdf). The project homepage
 shows the milestone and revised schedule; [proposal.html](proposal.html)
 preserves the original proposal.
 
-After editing the report, rebuild the site:
+After editing the report, proposal, or algorithm specification, rebuild the site:
 
 ```sh
 python3 scripts/build_site.py
@@ -117,8 +117,10 @@ python3 -m http.server 8000
 ```
 
 Open http://localhost:8000. The script reads `docs/milestone.md` and
-`docs/proposal.md`; generated pages and report figures should be committed with
-the source documents. Publishing requires deploying the repository through
+`docs/proposal.md` and `docs/algorithm.md`; generated pages and report figures
+should be committed with the source documents. The algorithm page uses MathJax
+from a CDN to render equations; without it, their TeX source remains visible.
+Publishing requires deploying the repository through
 GitHub Pages. The expected project URL is
 https://Lijunhaohz.github.io/15618-project/; local generation does not publish it.
 

@@ -147,3 +147,63 @@ whole pipeline. High bandwidth utilization alone does not prove memory-bound
 execution. Use the GUI for per-level launch details and warp-stall analysis.
 For anomalous timing points, repeat a timing-only `--profile none` sweep on an
 idle machine before reporting a scaling claim.
+
+## Suggested input sources
+
+### Aligned exposure brackets
+
+- **Small starting set:** Browse the
+  [OpenCV HDR exposure test images](https://github.com/opencv/opencv_extra/tree/4.x/testdata/cv/hdr/exposures)
+  and download several `memorialNN.png` files from the same sequence. Use
+  GitHub's download controls or the raw file links. Check their dimensions and
+  visually inspect registration before using them; record the source and
+  selected filenames.
+- **Broader evaluation:** The [SICE dataset](https://github.com/csjcai/SICE#dataset)
+  provides downloads for multi-exposure sequences. Follow the dataset page's
+  Google Drive or Baidu links, select images belonging to the same sequence,
+  and verify alignment and dimensions. Review the dataset's usage terms and
+  citation requirements before distributing images or results.
+- **Own captures:** Use a tripod and exposure bracketing on a static scene.
+  Keep the camera and focus fixed, inspect for movement, and export the
+  exposures at the same dimensions. No image alignment is included in the
+  baseline.
+
+Keep dataset downloads separate from source code, and record the source,
+license or usage terms, resolution, exposure count, and any preprocessing for
+each experiment.
+
+### Synthetic inputs
+
+Synthetic test images are more reproducible when generated locally than
+downloaded. For example, the following standard-library Python command writes
+three odd-sized constant RGB images and two identical images with a corner
+impulse as binary PPM files:
+
+```sh
+python3 - <<'PY'
+from pathlib import Path
+
+out = Path("test-inputs")
+out.mkdir(exist_ok=True)
+width, height = 7, 5
+
+def write_ppm(name, pixels):
+    header = f"P6\n{width} {height}\n255\n".encode("ascii")
+    (out / name).write_bytes(header + bytes(pixels))
+
+for value in (64, 128, 192):
+    write_ppm(f"constant-{value}.ppm", [value, value, value] * width * height)
+
+impulse = [0] * (width * height * 3)
+impulse[:3] = [255, 255, 255]
+for index in (0, 1):
+    write_ppm(f"impulse-{index}.ppm", impulse)
+PY
+```
+
+Use the constant images as one bracket and the impulse images as another.
+The constant bracket exercises zero-measure normalization; identical impulse
+images exercise boundary handling and reconstruction. The baseline image
+loader must support PPM for these files, or they can be converted losslessly
+to a supported RGB format. Also test a single image, one-pixel dimensions,
+and mismatched sizes.

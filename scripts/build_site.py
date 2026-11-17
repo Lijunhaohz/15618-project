@@ -1,4 +1,4 @@
-"""Build the milestone project page and archived proposal using the standard library."""
+"""Build the project website from its Markdown documents."""
 import html
 import re
 import posixpath
@@ -17,6 +17,7 @@ def inline(text):
             url = posixpath.normpath('docs/' + url)
         return '<a href="' + url + '">' + match[1] + '</a>'
     text = re.sub(r'\[([^\]]+)\]\(([^\s)]+)\)', link, text)
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
     return re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
 
 
@@ -36,6 +37,34 @@ def render(text):
     while i < len(lines):
         line = lines[i].strip()
         i += 1
+        if line.startswith('```'):
+            flush()
+            if current_list:
+                output.append(f'</{current_list}>')
+                current_list = None
+            code = []
+            while i < len(lines) and not lines[i].strip().startswith('```'):
+                code.append(lines[i])
+                i += 1
+            if i == len(lines):
+                raise ValueError('Unclosed code fence')
+            i += 1
+            output.append('<pre><code>' + html.escape('\n'.join(code)) + '</code></pre>')
+            continue
+        if line == '$$':
+            flush()
+            if current_list:
+                output.append(f'</{current_list}>')
+                current_list = None
+            math = []
+            while i < len(lines) and lines[i].strip() != '$$':
+                math.append(lines[i].strip())
+                i += 1
+            if i == len(lines):
+                raise ValueError('Unclosed display equation')
+            i += 1
+            output.append('<div class="math-display">$$\n' + html.escape('\n'.join(math)) + '\n$$</div>')
+            continue
         quote = re.match(r'^>\s?(.*)$', line)
         if quote:
             flush()
@@ -59,6 +88,10 @@ def render(text):
         rule = re.fullmatch(r'(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,}', line)
         item = re.match(r'^(?:(\d+)\.|(-))\s+(.+)', line)
         kind = ('ol' if item[1] else 'ul') if item and not rule else None
+        if not line and current_list and i < len(lines):
+            next_item = re.match(r'^(?:(\d+)\.|(-))\s+(.+)', lines[i].strip())
+            if next_item and ('ol' if next_item[1] else 'ul') == current_list:
+                continue
         if current_list and kind != current_list:
             output.append(f'</{current_list}>')
             current_list = None
@@ -94,7 +127,18 @@ def render(text):
             if not current_list:
                 output.append(f'<{kind}>')
                 current_list = kind
-            output.append('<li>' + inline(item[3]) + '</li>')
+            content = [item[3]]
+            while i < len(lines):
+                if lines[i].startswith(('  ', '\t')):
+                    content.append(re.sub(r'^(?: {1,3}|\t)', '', lines[i]))
+                    i += 1
+                elif not lines[i].strip() and i + 1 < len(lines) and lines[i + 1].startswith(('  ', '\t')):
+                    content.append('')
+                    i += 1
+                else:
+                    break
+            body = render('\n'.join(content)) if len(content) > 1 else inline(content[0])
+            output.append('<li>' + body + '</li>')
         elif line:
             paragraph.append(line)
         else:
@@ -114,10 +158,13 @@ def build(source_path, output_path, label):
         navigation.append(f'<a href="#{anchor}">{html.escape(heading)}</a>')
         sections.append(f'<section id="{anchor}"><span class="number">{(i+1)//2:02}</span><div><h2>{html.escape(heading)}</h2>{render(parts[i+1])}</div></section>')
     is_proposal = source_path == 'docs/proposal.md'
-    document_id = 'proposal' if is_proposal else 'milestone'
+    is_milestone = source_path == 'docs/milestone.md'
+    is_algorithm = source_path == 'docs/algorithm.md'
+    document_id = 'proposal' if is_proposal else 'milestone' if is_milestone else 'algorithm'
     tabs = []
     for href, name, active in [('index.html', 'Proposal', is_proposal),
-                               ('milestone.html', 'Milestone Report', not is_proposal)]:
+                               ('milestone.html', 'Milestone Report', is_milestone),
+                               ('algorithm.html', 'Algorithm Specification', is_algorithm)]:
         text = '<strong>' + name + '</strong>' if active else name
         current = ' aria-current="page"' if active else ''
         tabs.append('<a href="' + href + '"' + current + '>' + text + '</a>')
@@ -125,15 +172,21 @@ def build(source_path, output_path, label):
     project_url = re.search(r'(?m)^\*\*Project URL\*\*[ \t]*\n(?:[ \t]*\n)*[^\n]+', intro)
     url_html = render(project_url[0]) if project_url else '<p><strong>Project URL</strong></p><p><a href="https://Lijunhaohz.github.io/15618-project/">https://Lijunhaohz.github.io/15618-project/</a></p>'
     team_html = '<div class="team"><div><span>TEAM</span>Estella Xie <small>ziyoux</small><br>Junhao Li <small>junhaoli</small></div><div class="project-url">' + url_html + '</div></div>'
-    report_intro = '' if is_proposal else render('\n'.join(line for line in intro.splitlines() if not line.startswith('**Estella Xie')))
-    pdf_path = 'docs/proposal.pdf' if is_proposal else 'docs/milestone.pdf'
+    report_intro = render('\n'.join(line for line in intro.splitlines() if not line.startswith('**Estella Xie'))) if is_milestone else ''
+    pdf_path = 'docs/proposal.pdf' if is_proposal else 'docs/milestone.pdf' if is_milestone else None
     page = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
     page += '<meta name="description" content="15-618 exposure fusion project: implementation progress, measured results, and revised schedule.">'
+    if is_algorithm:
+        page += '<script>window.MathJax = {tex: {inlineMath: [["$", "$"], ["\\\\(", "\\\\)"]]}};</script>'
+        page += '<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>'
     page += '<title>' + html.escape(title + ' — ' + label) + '</title><link rel="stylesheet" href="assets/style.css"></head>'
     page += '<body><a class="skip" href="#' + document_id + '">Skip to ' + label.lower() + '</a>' + tabs_html
     page += '<main><div class="hero"><h1>' + html.escape(title) + '</h1>' + team_html + report_intro
     page += '</div><div class="document" id="' + document_id + '"><aside><div class="eyebrow">' + html.escape('IN THIS ' + label.upper()) + '</div><nav aria-label="' + html.escape(label, quote=True) + ' sections">'
-    page += ''.join(navigation) + '</nav><a href="' + pdf_path + '">Download PDF ↗</a><br><a href="' + source_path + '">Markdown source ↗</a></aside><article>'
+    page += ''.join(navigation) + '</nav>'
+    if pdf_path:
+        page += '<a href="' + pdf_path + '">Download PDF ↗</a><br>'
+    page += '<a href="' + source_path + '">Markdown source ↗</a></aside><article>'
     page += '\n'.join(sections) + '</article></div></main><footer>Estella Xie &amp; Junhao Li · 15-618 · CUDA-Accelerated Multi-Exposure Image Fusion</footer></body></html>'
     (ROOT / output_path).write_text(page)
     print('Built ' + output_path + ' from ' + source_path)
@@ -143,3 +196,4 @@ if __name__ == '__main__':
     build('docs/proposal.md', 'index.html', 'Proposal')
     build('docs/proposal.md', 'proposal.html', 'Proposal')
     build('docs/milestone.md', 'milestone.html', 'Milestone Report')
+    build('docs/algorithm.md', 'algorithm.html', 'Algorithm Specification')

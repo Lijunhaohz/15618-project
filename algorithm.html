@@ -1,0 +1,89 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="15-618 exposure fusion project: implementation progress, measured results, and revised schedule."><script>window.MathJax = {tex: {inlineMath: [["$", "$"], ["\\(", "\\)"]]}};</script><script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-mml-chtml.js"></script><title>Algorithm Specification — Algorithm Specification</title><link rel="stylesheet" href="assets/style.css"></head><body><a class="skip" href="#algorithm">Skip to algorithm specification</a><header aria-label="Project documents"><div><a href="index.html">Proposal</a> &nbsp; / &nbsp; <a href="milestone.html">Milestone Report</a> &nbsp; / &nbsp; <a href="algorithm.html" aria-current="page"><strong>Algorithm Specification</strong></a></div></header><main><div class="hero"><h1>Algorithm Specification</h1><div class="team"><div><span>TEAM</span>Estella Xie <small>ziyoux</small><br>Junhao Li <small>junhaoli</small></div><div class="project-url"><p><strong>Project URL</strong></p><p><a href="https://Lijunhaohz.github.io/15618-project/">https://Lijunhaohz.github.io/15618-project/</a></p></div></div></div><div class="document" id="algorithm"><aside><div class="eyebrow">IN THIS ALGORITHM SPECIFICATION</div><nav aria-label="Algorithm Specification sections"><a href="#input-and-numerical-conventions">Input and numerical conventions</a><a href="#weight-computation">Weight computation</a><a href="#building-pyramids">Building pyramids</a><a href="#blending-and-reconstruction">Blending and reconstruction</a><a href="#correctness-checks">Correctness checks</a></nav><a href="docs/algorithm.md">Markdown source ↗</a></aside><article><section id="input-and-numerical-conventions"><span class="number">01</span><div><h2>Input and numerical conventions</h2><ul>
+<li><p>Accept one or more pre-aligned, same-size RGB images of a static scene; a typical bracket has multiple exposures. Alignment and ghost removal are out of scope. Reject missing images, mismatched dimensions, invalid pixel values, or unsupported formats with an explicit error.</p></li>
+<li><p>Decode 8-bit RGB values to <code>float32</code> in <code>[0, 1]</code> by dividing by 255. Operate directly on these encoded RGB values, without linearizing them. Use <code>float32</code> for weights, pyramid levels, blending, and reconstruction.</p></li>
+<li><p>Keep intermediate and reconstructed values unclipped for correctness comparisons. For a viewable 8-bit output, clamp the final RGB values to <code>[0, 1]</code>, multiply by 255, and round to the nearest integer.</p></li>
+<li><p>Default to at most five pyramid levels, counting the original image as level zero; stop earlier when both dimensions reach one. Allow a smaller explicit level count and reject counts below one or beyond that limit.</p></li>
+</ul></div></section>
+<section id="weight-computation"><span class="number">02</span><div><h2>Weight computation</h2><p>For exposure $i$ and pixel $p = (x, y)$, let $R_i(p)$, $G_i(p)$, and $B_i(p)$ be the RGB values. Compute three measures, each with exponent 1:</p>
+<ol>
+<li><p><strong>Contrast:</strong> Convert to grayscale and take the absolute value of the four-neighbor Laplacian:</p>
+<div class="math-display">$$
+\begin{aligned}
+Y_i(p) &amp;= 0.299 R_i(p) + 0.587 G_i(p) + 0.114 B_i(p), \\
+C_i(p) &amp;= \left|Y_i(x-1,y) + Y_i(x+1,y) + Y_i(x,y-1)
++ Y_i(x,y+1) - 4Y_i(p)\right|.
+\end{aligned}
+$$</div></li>
+<li><p><strong>Saturation:</strong> Compute the population standard deviation of the channels:</p>
+<div class="math-display">$$
+\begin{aligned}
+\mu_i(p) &amp;= \frac{R_i(p) + G_i(p) + B_i(p)}{3}, \\
+S_i(p) &amp;= \sqrt{\frac{(R_i(p)-\mu_i(p))^2 +
+(G_i(p)-\mu_i(p))^2 + (B_i(p)-\mu_i(p))^2}{3}}.
+\end{aligned}
+$$</div></li>
+<li><p><strong>Well-exposedness:</strong> Multiply a Gaussian measure for each channel:</p>
+<div class="math-display">$$
+E_i(p) = \prod_{c \in \{R,G,B\}}
+\exp\left(-\frac{(I_{i,c}(p)-0.5)^2}{2(0.2)^2}\right),
+$$</div>
+<p>where $I_{i,c}(p)$ is the value of channel $c$.</p></li>
+</ol>
+<p>For $N$ exposures, add epsilon to the product and normalize across exposures at each pixel:</p>
+<div class="math-display">$$
+w_i(p) = C_i(p)S_i(p)E_i(p) + 10^{-12},
+\qquad
+W_i(p) = \frac{w_i(p)}{\sum_{j=1}^{N} w_j(p)}.
+$$</div>
+<p>Adding epsilon before normalization gives equal weights when every exposure has zero contrast or saturation.</p></div></section>
+<section id="building-pyramids"><span class="number">03</span><div><h2>Building pyramids</h2><p>In this section, we describe how to build pyramids for images and weight maps, which are used for multi-scale blending.</p>
+<ul>
+<li>For each normalized weight map, we build a Gaussian pyramid using the same reduce operation.</li>
+<li>For each RGB image, we build a Laplacian pyramid by first constructing a Gaussian pyramid and then taking differences between levels.</li>
+</ul>
+<figure><img style="width:100%;height:auto" src="docs/imgs/laplacian.png" alt="Construction of a Laplacian pyramid."><figcaption>Construction of a Laplacian pyramid.</figcaption></figure>
+<p>We use the separable five-tap <strong>Gaussian kernel</strong> in each dimension:</p>
+<div class="math-display">$$
+h[-2], h[-1], h[0], h[1], h[2] = \frac{1}{16}[1, 4, 6, 4, 1].
+$$</div>
+<p>For all neighborhood operations, <strong>reflect indices</strong> without repeating the edge: for length $n &gt; 1$, the sequence around the left edge is <code>... 2, 1, 0, 1, 2 ...</code>; repeat this reflection as needed. For $n = 1$, every index maps to zero.</p>
+<p><strong>Reduce</strong> applies Gaussian filtering and samples even coordinates. For an image or scalar map $A$, using reflected indices outside its bounds:</p>
+<div class="math-display">$$
+\operatorname{reduce}(A)(x,y) =
+\sum_{a=-2}^{2}\sum_{b=-2}^{2} h[a]h[b]A(2x+a, 2y+b).
+$$</div>
+<p>The next level has dimensions $\lceil\text{width}/2\rceil \times \lceil\text{height}/2\rceil$, including for odd dimensions.</p>
+<p><strong>Expand</strong> produces the exact dimensions of the preceding finer level. In one dimension, for fine coordinate $x$ and coarse array $A$:</p>
+<div class="math-display">$$
+\operatorname{expand}_{1D}(A)(x) =
+2 \sum_{\substack{i \in \mathbb{Z}\\-2 \le x-2i \le 2}}
+h[x-2i]\,A(i).
+$$</div>
+<p>Reflect coarse indices outside the array and apply this operation separably in both dimensions.</p>
+<p>For $K$ levels numbered $0$ through $K-1$, build Gaussian pyramids for each RGB image $I_i$ and normalized weight map $W_i$:</p>
+<div class="math-display">$$
+\begin{aligned}
+G^I_{i,0} &amp;= I_i, &amp; G^I_{i,\ell+1} &amp;= \operatorname{reduce}(G^I_{i,\ell}), \\
+G^W_{i,0} &amp;= W_i, &amp; G^W_{i,\ell+1} &amp;= \operatorname{reduce}(G^W_{i,\ell}).
+\end{aligned}
+$$</div>
+<p>The image Laplacian pyramid is defined by:</p>
+<div class="math-display">$$
+L_{i,\ell} =
+\begin{cases}
+G^I_{i,\ell} - \operatorname{expand}(G^I_{i,\ell+1}), &amp; 0 \le \ell &lt; K-1, \\
+G^I_{i,K-1}, &amp; \ell = K-1.
+\end{cases}
+$$</div></div></section>
+<section id="blending-and-reconstruction"><span class="number">04</span><div><h2>Blending and reconstruction</h2><figure><img style="width:100%;height:auto" src="docs/imgs/blending.png" alt="Multi-scale blending and reconstruction."><figcaption>Multi-scale blending and reconstruction.</figcaption></figure>
+<p>Blend each level, applying the scalar weight to every RGB channel, then reconstruct from coarse to fine:</p>
+<div class="math-display">$$
+\begin{aligned}
+B_{\ell} &amp;= \sum_{i=1}^{N} G^W_{i,\ell} L_{i,\ell}, \\
+F_{K-1} &amp;= B_{K-1}, \\
+F_{\ell} &amp;= B_{\ell} + \operatorname{expand}(F_{\ell+1}),
+\quad \ell = K-2,\ldots,0.
+\end{aligned}
+$$</div>
+<p>The final fused image is $F_0$.</p></div></section>
+<section id="correctness-checks"><span class="number">05</span><div><h2>Correctness checks</h2><p>Compare CPU and CUDA weights, pyramid levels, blended levels, and final floating-point outputs using maximum absolute error and RMSE. Record tolerances and investigate discrepancies, particularly around boundaries. Also check that normalized weights sum to approximately one, that a single-exposure result reconstructs its input, and that constant, impulse, and odd-sized inputs behave consistently. Visual inspection complements these checks but does not replace them.</p></div></section></article></div></main><footer>Estella Xie &amp; Junhao Li · 15-618 · CUDA-Accelerated Multi-Exposure Image Fusion</footer></body></html>
