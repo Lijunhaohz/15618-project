@@ -4,6 +4,10 @@
 
 **Estella Xie (ziyoux), Junhao Li (junhaoli)**
 
+**Project URL**
+
+[https://Lijunhaohz.github.io/15618-project/](https://Lijunhaohz.github.io/15618-project/)
+
 ## Implementation and design
 
 We have completed a serial CPU reference and a separate-kernel working CUDA baseline for Mertens exposure fusion. Both compute contrast, saturation, and well-exposedness weights, normalize them across exposures, build Gaussian weight pyramids and Laplacian image pyramids, blend the levels, and reconstruct one output image. They share the same floating-point, sampling, and reflected-boundary rules. The command-line application accepts aligned RGB PNG/PPM inputs, supports different pyramid depths, and saves the fused image. See the [algorithm specification](../algorithm.html) for the numerical conventions and pipeline details.
